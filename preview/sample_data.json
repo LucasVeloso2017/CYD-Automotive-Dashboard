@@ -1,0 +1,23 @@
+{
+  "_comment": "Valores brutos usados quando o preview esta em modo conectado. As chaves sao os sinais de vehicle_data.h e os maximos de ui_mock_data.c; a formatacao (fmt_f1/fmt_f2/fmt_int) e aplicada pelo preview.",
+  "signals": {
+    "lambda": 0.987,
+    "water_temp_c": 90,
+    "battery_v": 13.8,
+    "boost_bar": 0.85,
+    "comb_pressure_bar": 3.5,
+    "iat_c": 42,
+    "oil_temp_c": 95,
+    "max_boost": 1.2,
+    "max_comb": 6.1,
+    "max_iat": 55,
+    "max_oil": 102,
+    "max_lambda": 1.05,
+    "max_batt": 14.1
+  },
+  "devices": [
+    { "name": "OBDII", "addr": "1c:a1:35:68:2f:aa", "rssi": -45, "obd2": true },
+    { "name": "V-LINK", "addr": "00:1d:a5:68:98:8b", "rssi": -72, "obd2": false },
+    { "name": "Car Audio", "addr": "84:2e:14:0c:71:03", "rssi": -81, "obd2": false }
+  ]
+}

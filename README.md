@@ -68,6 +68,7 @@ Sketch size is large because of UI image assets (~88% of a 3 MB app partition). 
 ```
 car-dashboard-remastered/
 ├── car-dashboard-remastered.ino   # Bootstrap: display, touch, LVGL, BT
+├── preview/                       # Preview das telas no navegador (python3 preview/preview.py)
 └── src/
     ├── gateway/
     │   ├── bt_gateway.*          # Bluetooth Classic scan / connect / SPP I/O
@@ -85,6 +86,17 @@ car-dashboard-remastered/
         │   └── ui_blelist.*
         └── assets/               # SquareLine-exported images (LVGL 9)
 ```
+
+## Preview no PC
+
+Antes de gravar no CYD dá para ver as telas no navegador:
+
+```sh
+python3 preview/preview.py
+```
+
+O preview decodifica os assets de `src/ui/assets/` e lê coordenadas, fontes e
+formatações direto dos `.c` das views — detalhes em [`preview/README.md`](preview/README.md).
 
 ## Screens and navigation
 
