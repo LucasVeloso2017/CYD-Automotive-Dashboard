@@ -79,8 +79,16 @@ static uint32_t tick_get_cb(void) { return millis(); }
 void setup()
 {
     Serial.begin(115200);
+
+    // A GRAM do painel acorda com lixo. tft.begin() liga o backlight no fim da
+    // init(), entao esse lixo vira chuvisco colorido na tela ate o LVGL desenhar
+    // o primeiro frame. Apaga o backlight, limpa a tela e so acende no fim do setup.
     tft.begin();
+#if defined(TFT_BL) && defined(TFT_BACKLIGHT_ON)
+    digitalWrite(TFT_BL, !TFT_BACKLIGHT_ON);
+#endif
     tft.setRotation(1);
+    tft.fillScreen(TFT_BLACK);
 
     touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
     ts.begin(touchSPI);
@@ -109,6 +117,13 @@ void setup()
     lv_indev_set_read_cb(indev, touchpad_read);
 
     ui_init();
+
+    // Primeiro frame no painel antes de acender: a tela abre no splash, nunca no lixo.
+    lv_refr_now(NULL);
+#if defined(TFT_BL) && defined(TFT_BACKLIGHT_ON)
+    digitalWrite(TFT_BL, TFT_BACKLIGHT_ON);
+#endif
+
     Serial.println("Car Dashboard initialized");
 }
 
