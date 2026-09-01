@@ -12,10 +12,14 @@ void ui_splash_screen_init(void)
     lv_obj_set_style_bg_opa(ui_splash, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_Image2 = lv_image_create(ui_splash);
-    lv_image_set_src(ui_Image2, &ui_img_1566941461);
+    lv_image_set_src(ui_Image2, &ui_img_golf_gti);
     lv_obj_set_width(ui_Image2, LV_SIZE_CONTENT);
     lv_obj_set_height(ui_Image2, LV_SIZE_CONTENT);
     lv_obj_set_align(ui_Image2, LV_ALIGN_CENTER);
+    // o preto do PNG original foi recortado; estes offsets recolocam o
+    // carro exatamente onde ele estava na arte de 320x240
+    lv_obj_set_x(ui_Image2, 1);
+    lv_obj_set_y(ui_Image2, 22);
     lv_obj_add_flag(ui_Image2, LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_clear_flag(ui_Image2, LV_OBJ_FLAG_SCROLLABLE);
 

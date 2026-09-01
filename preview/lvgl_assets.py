@@ -50,7 +50,7 @@ def decode(path):
     name, body = dsc.group(1), dsc.group(2)
 
     cf = _field(body, "cf")
-    if cf != "LV_COLOR_FORMAT_ARGB8888":
+    if cf not in ("LV_COLOR_FORMAT_ARGB8888", "LV_COLOR_FORMAT_RGB565"):
         raise ValueError("%s: formato %s ainda nao suportado" % (path.name, cf))
 
     width, height = int(_field(body, "w")), int(_field(body, "h"))
@@ -60,19 +60,30 @@ def decode(path):
         raise ValueError("%s: array de pixels nao encontrado" % path.name)
     buf = bytes(int(b, 16) for b in _BYTE_RE.findall(data.group(1)))
 
-    need = width * height * 4
+    bpp = 2 if cf == "LV_COLOR_FORMAT_RGB565" else 4
+    need = width * height * bpp
     if len(buf) < need:
         raise ValueError(
             "%s: %d bytes lidos, %d esperados para %dx%d"
             % (path.name, len(buf), need, width, height)
         )
 
-    # LVGL guarda ARGB8888 como B,G,R,A em little-endian.
-    rgba = bytearray(need)
-    rgba[0::4] = buf[2:need:4]
-    rgba[1::4] = buf[1:need:4]
-    rgba[2::4] = buf[0:need:4]
-    rgba[3::4] = buf[3:need:4]
+    rgba = bytearray(width * height * 4)
+    if bpp == 2:
+        # RGB565 little-endian, sempre opaco.
+        for i in range(width * height):
+            v = buf[2 * i] | (buf[2 * i + 1] << 8)
+            r, g, b = (v >> 11) & 0x1F, (v >> 5) & 0x3F, v & 0x1F
+            rgba[4 * i] = (r << 3) | (r >> 2)
+            rgba[4 * i + 1] = (g << 2) | (g >> 4)
+            rgba[4 * i + 2] = (b << 3) | (b >> 2)
+            rgba[4 * i + 3] = 0xFF
+    else:
+        # LVGL guarda ARGB8888 como B,G,R,A em little-endian.
+        rgba[0::4] = buf[2:need:4]
+        rgba[1::4] = buf[1:need:4]
+        rgba[2::4] = buf[0:need:4]
+        rgba[3::4] = buf[3:need:4]
 
     return name, width, height, _png(width, height, bytes(rgba))
 

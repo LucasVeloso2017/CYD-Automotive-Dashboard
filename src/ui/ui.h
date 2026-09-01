@@ -33,7 +33,7 @@ extern lv_anim_t * splash_Animation(lv_obj_t *TargetObject, int delay);
 
 extern lv_obj_t *ui____initial_actions0;
 
-LV_IMAGE_DECLARE(ui_img_1566941461);
+LV_IMAGE_DECLARE(ui_img_golf_gti);
 LV_IMAGE_DECLARE(ui_img_2056485965);
 LV_IMAGE_DECLARE(ui_img_1105076504);
 LV_IMAGE_DECLARE(ui_img_1706062683);
