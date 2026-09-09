@@ -54,7 +54,7 @@ Bluetooth uses the built-in **BluetoothSerial** library from the ESP32 Arduino c
 | Flash Mode | QIO |
 | Upload Speed | **115200** (921600 often fails on CH340 CYD boards) |
 
-Sketch size is large because of UI image assets (~81% of a 3 MB app partition). The default 1.3 MB partition will not fit.
+Sketch size is large because of UI image assets (~82% of a 3 MB app partition). The default 1.3 MB partition will not fit.
 
 ### Upload tips
 
