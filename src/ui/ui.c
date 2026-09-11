@@ -1,8 +1,6 @@
 #include "ui.h"
 #include "ui_helpers.h"
 
-lv_obj_t *ui____initial_actions0;
-
 ///////////////////// ANIMATIONS ////////////////////
 lv_anim_t * splash_Animation(lv_obj_t *TargetObject, int delay)
 {
@@ -34,11 +32,10 @@ lv_anim_t * splash_Animation(lv_obj_t *TargetObject, int delay)
 
 void ui_init(void)
 {
+    /* Apenas o splash e criado aqui. As outras telas nascem no swipe e
+     * morrem ao sair da tela (ui_navigation.c), para manter o heap livre
+     * para BT Classic + Wi-Fi. */
     ui_splash_screen_init();
-    ui_nanomode_screen_init();
-    ui_trackmode_screen_init();
-    ui_blelist_screen_init();
-    ui____initial_actions0 = lv_obj_create(NULL);
     lv_screen_load(ui_splash);
     ui_navigation_init();
     ui_mock_data_init();
@@ -50,4 +47,5 @@ void ui_destroy(void)
     ui_nanomode_screen_destroy();
     ui_trackmode_screen_destroy();
     ui_blelist_screen_destroy();
+    ui_wifi_screen_destroy();
 }

@@ -116,7 +116,9 @@ void bt_init(void)
 {
     if (_initialized) return;
 
-    if (!SerialBT.begin("CarDash", true)) {
+    /* disableBLE=true: controlador em modo Classic puro, libera a RAM do BLE
+     * (~10 KB). O Wi-Fi do track-metrics disputa esse heap. */
+    if (!SerialBT.begin("CarDash", true, true)) {
         Serial.println("[BT] Init failed");
         return;
     }
@@ -164,6 +166,60 @@ void bt_connect(uint8_t scan_index)
     }
     _pending_connect = (int8_t)scan_index;
     bt_state.connecting = true;
+}
+
+static bool _suspended = false;
+static bt_scan_result_t _last_dev;     /* para reconectar sozinho no resume */
+static bool _has_last_dev = false;
+
+bool bt_suspend(void)
+{
+    if (!_initialized) return true;
+    if (_connecting || _connect_task) return false;   /* connect_task esta dentro de SerialBT.connect() */
+
+    if (bt_state.connected && bt_state.connected_addr[0]) {
+        memset(&_last_dev, 0, sizeof(_last_dev));
+        strncpy(_last_dev.name, bt_state.connected_name, BT_DEVICE_NAME_LEN - 1);
+        strncpy(_last_dev.addr, bt_state.connected_addr, BT_ADDR_LEN - 1);
+        _has_last_dev = true;
+    }
+
+    bt_stop_scan();
+    bt_disconnect();
+    elm327_stop_task();
+    bt_state.count = 0;
+    bt_state.scanning = false;
+    bt_state.connecting = false;
+
+    SerialBT.end();          /* SPP + Bluedroid + controlador: deinit, heap de volta */
+    _initialized = false;
+    _suspended = true;
+    Serial.println("[BT] Suspenso (Wi-Fi ativo)");
+    return true;
+}
+
+void bt_resume(void)
+{
+    if (!_suspended) return;
+    _suspended = false;
+    bt_init();
+    Serial.println("[BT] Retomado");
+
+    /* Reconecta ao ELM327 que estava ligado antes do Wi-Fi, sem novo scan:
+     * o endereco vai como unico resultado e segue o mesmo caminho do toque
+     * na blelist (bt_connect -> connect_task). Se falhar, a blelist volta a
+     * escanear normalmente. */
+    if (_has_last_dev && _initialized) {
+        bt_state.results[0] = _last_dev;
+        bt_state.count = 1;
+        Serial.printf("[BT] Reconectando a %s (%s)\n", _last_dev.name, _last_dev.addr);
+        bt_connect(0);
+    }
+}
+
+bool bt_is_suspended(void)
+{
+    return _suspended;
 }
 
 void bt_disconnect(void)

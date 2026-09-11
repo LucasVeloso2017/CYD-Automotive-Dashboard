@@ -304,6 +304,17 @@ static void ensure_task(void)
     }
 }
 
+void elm327_stop_task(void)
+{
+    if (_task == NULL) return;
+    _task_run = false;
+    /* a task sai no proximo loop; no pior caso espera um comando ELM
+     * estourar o timeout (1,2 s). Sem esperar, um ensure_task() logo em
+     * seguida veria _task != NULL e nao recriaria. */
+    for (int i = 0; i < 200 && _task != NULL; i++) vTaskDelay(pdMS_TO_TICKS(10));
+    if (_task != NULL) Serial.println("[ELM327] task nao saiu a tempo");
+}
+
 void elm327_init_session(void)
 {
     _init_pending = true;

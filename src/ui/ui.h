@@ -27,11 +27,10 @@ extern "C" {
 #include "views/ui_nanomode.h"
 #include "views/ui_trackmode.h"
 #include "views/ui_blelist.h"
+#include "views/ui_wifi.h"
 
 ///////////////////// VARIABLES ////////////////////
 extern lv_anim_t * splash_Animation(lv_obj_t *TargetObject, int delay);
-
-extern lv_obj_t *ui____initial_actions0;
 
 LV_IMAGE_DECLARE(ui_img_rent4fun);
 LV_IMAGE_DECLARE(ui_img_2056485965);

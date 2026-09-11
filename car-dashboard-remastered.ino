@@ -22,6 +22,12 @@
 
 #include "src/ui/ui.h"
 #include "src/gateway/bt_gateway.h"
+#include "src/net/track_server.h"
+
+/* Diagnostico: 1 = nao inicializa o Bluetooth. Se o celular passar a
+ * conectar no AP com isso, a causa e a coexistencia de radio BT+Wi-Fi; se
+ * continuar falhando, a causa esta na configuracao do proprio AP. */
+#define TRACK_DEBUG_NO_BT  0
 
 #define SCREEN_WIDTH  320
 #define SCREEN_HEIGHT 240
@@ -76,9 +82,18 @@ static void touchpad_read(lv_indev_t *indev, lv_indev_data_t *data)
 
 static uint32_t tick_get_cb(void) { return millis(); }
 
+/* Heap e o recurso mais apertado deste projeto (BT Classic + LVGL + Wi-Fi
+ * sem PSRAM). Loga a cada etapa do boot para ver quem consome o que. */
+static void heap_log(const char *stage)
+{
+    Serial.printf("[HEAP] %-14s livre %6u B, maior bloco %6u B\n",
+                  stage, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+}
+
 void setup()
 {
     Serial.begin(115200);
+    heap_log("boot");
 
     // A GRAM do painel acorda com lixo. tft.begin() liga o backlight no fim da
     // init(), entao esse lixo vira chuvisco colorido na tela ate o LVGL desenhar
@@ -93,8 +108,14 @@ void setup()
     touchSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
     ts.begin(touchSPI);
     ts.setRotation(1);
+    heap_log("tft+touch");
 
+#if TRACK_DEBUG_NO_BT
+    Serial.println("[BT] DESLIGADO por TRACK_DEBUG_NO_BT (diagnostico Wi-Fi)");
+#else
     bt_init();
+#endif
+    heap_log("bluetooth");
 
     lv_init();
     lv_tick_set_cb(tick_get_cb);
@@ -115,8 +136,10 @@ void setup()
     lv_indev_t *indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touchpad_read);
+    heap_log("lvgl+display");
 
     ui_init();
+    heap_log("ui (telas)");
 
     // Primeiro frame no painel antes de acender: a tela abre no splash, nunca no lixo.
     lv_refr_now(NULL);
@@ -131,5 +154,6 @@ void loop()
 {
     lv_timer_handler();
     bt_loop();
+    track_server_loop();
     delay(2);
 }

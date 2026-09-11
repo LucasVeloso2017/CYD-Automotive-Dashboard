@@ -15,8 +15,14 @@ static float max_iat = 0;
 static float max_oil = 0;
 static float max_lambda = 0;
 static float max_batt = 0;
+static float max_water = 0;
+static float min_lambda = 0;
+static float min_batt = 0;
 
 static bool session_active = false;
+static uint32_t session_start_ms = 0;
+static uint32_t session_end_ms = 0;
+static uint32_t session_samples = 0;
 static uint32_t last_log_ms = 0;
 static uint32_t last_rev = 0;
 
@@ -50,7 +56,7 @@ static void fmt_int(lv_obj_t *l, int v)
 }
 
 static void update_max_values(float boost, float comb, float iat, float oil,
-                              float lambda, float batt)
+                              float lambda, float batt, float water)
 {
     if (boost > max_boost) max_boost = boost;
     if (comb > max_comb) max_comb = comb;
@@ -58,6 +64,13 @@ static void update_max_values(float boost, float comb, float iat, float oil,
     if (oil > max_oil) max_oil = oil;
     if (lambda > max_lambda) max_lambda = lambda;
     if (batt > max_batt) max_batt = batt;
+    if (water > max_water) max_water = water;
+
+    /* minimos: a primeira amostra da sessao inicializa, as demais comparam.
+     * lambda 0 e bateria 0 sao "sem leitura", nao minimo real. */
+    if (lambda > 0.0f && (min_lambda <= 0.0f || lambda < min_lambda)) min_lambda = lambda;
+    if (batt > 0.0f && (min_batt <= 0.0f || batt < min_batt)) min_batt = batt;
+    session_samples++;
 }
 
 static void render_gauges(void)
@@ -91,6 +104,28 @@ static void reset_max_values(void)
     max_oil = 0;
     max_lambda = 0;
     max_batt = 0;
+    max_water = 0;
+    min_lambda = 0;
+    min_batt = 0;
+    session_samples = 0;
+}
+
+void ui_session_get_stats(ui_session_stats_t *out)
+{
+    if (!out) return;
+    out->active     = session_active;
+    out->start_ms   = session_start_ms;
+    out->end_ms     = session_active ? session_start_ms : session_end_ms;
+    out->samples    = session_samples;
+    out->max_boost  = max_boost <= BOOST_MAX_FLOOR ? 0.0f : max_boost;
+    out->max_comb   = max_comb;
+    out->max_iat    = max_iat;
+    out->max_oil    = max_oil;
+    out->max_lambda = max_lambda;
+    out->max_batt   = max_batt;
+    out->max_water  = max_water;
+    out->min_lambda = min_lambda;
+    out->min_batt   = min_batt;
 }
 
 static void update_default_values(void)
@@ -147,8 +182,11 @@ static void poll_cb(lv_timer_t *timer)
         if (session_active) {
             session_active = false;
             last_rev = 0;
-            reset_max_values();
-            printf("[OBD2] Session ended - max values reset\n");
+            session_end_ms = lv_tick_get();
+            /* o resumo (max/min) fica em RAM para a pagina do track-metrics;
+             * a proxima sessao zera ao comecar. Os gauges no display voltam
+             * a "00" mesmo assim, via update_default_values(). */
+            printf("[OBD2] Session ended - summary kept (%lu samples)\n", (unsigned long)session_samples);
         }
         update_default_values();
         return;
@@ -159,6 +197,7 @@ static void poll_cb(lv_timer_t *timer)
     if (!session_active) {
         session_active = true;
         reset_max_values();
+        session_start_ms = lv_tick_get();
         printf("[OBD2] Session started\n");
     }
 
@@ -167,9 +206,19 @@ static void poll_cb(lv_timer_t *timer)
 
     const vehicle_gauge_data_t *g = &vehicle.gauges;
     update_max_values(g->boost_bar, g->comb_pressure_bar, g->iat_c,
-                      g->oil_temp_c, g->lambda, g->battery_v);
+                      g->oil_temp_c, g->lambda, g->battery_v, g->water_temp_c);
     render_gauges();
     log_gauges(lv_tick_get());
+}
+
+void ui_mock_data_refresh(void)
+{
+    bool connected = bt_is_connected() && elm327_is_ready();
+    if (!connected || !vehicle.gauges.valid) {
+        update_default_values();
+        return;
+    }
+    render_gauges();
 }
 
 void ui_mock_data_init(void)
