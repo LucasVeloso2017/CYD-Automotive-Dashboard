@@ -85,7 +85,8 @@ car-dashboard-remastered/
     ├── gateway/
     │   ├── bt_gateway.*          # Bluetooth Classic scan / connect / SPP I/O
     │   ├── bt_device_data.h      # Scan results and connection state
-    │   ├── elm327_gateway.*      # ELM327 init + OBD2 PID polling
+    │   ├── elm327_gateway.*      # ELM327 init + OBD2 PID polling + DTC read
+    │   ├── dtc_data.h            # DTC snapshot shared with the web page
     │   └── vehicle_data.h        # Shared live gauge values
     ├── net/
     │   ├── track_server.*        # Wi-Fi AP + captive portal + /data JSON
@@ -135,7 +136,17 @@ The **wifi** screen shows a QR code and the access point credentials. The page o
 2. Once joined, the captive portal opens the page (DHCP option 114 for iOS 14+ / Android 11+, HTTP probes as fallback). Android shows a *"Sign in to network"* notification instead of opening a browser; tap it. If nothing opens, browse to `http://192.168.4.1`.
 3. Swipe away from the wifi screen to restore Bluetooth.
 
+The page also lists the **diagnostic trouble codes** from the last read: stored (mode `03`), pending (`07`) and permanent (`0A`), MIL status and count (`01 01`), plus the freeze frame (`02`: rpm, speed, coolant, load, throttle, MAP) of the first stored code. Codes are read by the polling task right after the ELM327 session opens and every 60 s, and the snapshot survives the BT suspend. The page decodes each code structurally (system, SAE-generic vs manufacturer, powertrain subsystem, misfiring cylinder) without a description table. `preview/test_dtc.mk` runs the response parser on the PC against recorded ELM327 replies (CAN single/multi-frame, two ECUs, K-line).
+
 SSID and password live in `src/net/track_server.h`. The page is self-contained (no CDN, no external fonts) because the phone has no internet while on the AP.
+
+`GET /dtc` returns:
+
+```json
+{"valid":true,"age_s":95,"mil":true,"ecu_count":2,
+ "stored":["P0301","P0133"],"pending":["P0420"],"permanent":[],
+ "ff":{"dtc":"P0301","rpm":6210,"speed":132,"coolant":104,"load":100,"throttle":98,"map":210}}
+```
 
 `GET /data` returns:
 

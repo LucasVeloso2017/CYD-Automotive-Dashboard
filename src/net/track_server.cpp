@@ -1,6 +1,7 @@
 #include "track_server.h"
 #include "track_page.h"
 #include "../gateway/bt_gateway.h"
+#include "../gateway/elm327_gateway.h"
 #include "../ui/ui_mock_data.h"
 
 #include <WiFi.h>
@@ -60,6 +61,52 @@ static void handle_data(void)
         s.max_boost, s.max_comb, s.max_iat, s.max_oil,
         s.max_lambda, s.max_batt, s.max_water,
         s.min_lambda, s.min_batt);
+
+    no_cache();
+    server.send(200, "application/json", buf);
+}
+
+/* Lista de codigos como array JSON de strings: ["P0133","P0271"] */
+static size_t json_codes(char *out, size_t cap, const uint16_t *list, uint8_t n)
+{
+    size_t w = 0;
+    w += snprintf(out + w, cap - w, "[");
+    for (uint8_t i = 0; i < n && w < cap; i++) {
+        char code[6];
+        dtc_format(list[i], code);
+        w += snprintf(out + w, cap - w, "%s\"%s\"", i ? "," : "", code);
+    }
+    if (w < cap) w += snprintf(out + w, cap - w, "]");
+    return w;
+}
+
+/* Snapshot de DTCs da ultima leitura pelo ELM327 (o BT esta suspenso
+ * enquanto a pagina esta no ar, entao e sempre "lido ha N s"). */
+static void handle_dtc(void)
+{
+    const dtc_snapshot_t *d = elm327_dtc();
+    char stored[DTC_MAX_CODES * 9 + 4], pending[DTC_MAX_CODES * 9 + 4], permanent[DTC_MAX_CODES * 9 + 4];
+    json_codes(stored, sizeof(stored), d->stored, d->n_stored);
+    json_codes(pending, sizeof(pending), d->pending, d->n_pending);
+    json_codes(permanent, sizeof(permanent), d->permanent, d->n_permanent);
+
+    char ff[160] = "null";
+    if (d->ff.valid) {
+        char code[6];
+        dtc_format(d->ff.dtc, code);
+        snprintf(ff, sizeof(ff),
+                 "{\"dtc\":\"%s\",\"rpm\":%u,\"speed\":%u,\"coolant\":%d,\"load\":%u,\"throttle\":%u,\"map\":%u}",
+                 code, d->ff.rpm, d->ff.speed_kmh, d->ff.coolant_c, d->ff.load_pct, d->ff.throttle_pct, d->ff.map_kpa);
+    }
+
+    static char buf[640];
+    snprintf(buf, sizeof(buf),
+             "{\"valid\":%s,\"age_s\":%lu,\"mil\":%s,\"ecu_count\":%u,"
+             "\"stored\":%s,\"pending\":%s,\"permanent\":%s,\"ff\":%s}",
+             d->valid ? "true" : "false",
+             (unsigned long)(d->valid ? (millis() - d->read_ms) / 1000 : 0),
+             d->mil ? "true" : "false", d->ecu_count,
+             stored, pending, permanent, ff);
 
     no_cache();
     server.send(200, "application/json", buf);
@@ -166,6 +213,7 @@ void track_server_start(void)
 
     server.on("/", handle_root);
     server.on("/data", handle_data);
+    server.on("/dtc", handle_dtc);
 
     static const char *const probes[] = {
         "/generate_204", "/gen_204",                            /* Android */

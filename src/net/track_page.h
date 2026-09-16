@@ -1,8 +1,9 @@
 // Pagina servida em http://192.168.4.1/ pelo track_server. Autocontida de
 // proposito: o celular esta na rede do ESP, sem internet, entao nada de CDN,
 // fonte externa ou biblioteca. Mostra o RESUMO da ultima sessao (max/min,
-// duracao, amostras): enquanto o Wi-Fi esta no ar o Bluetooth fica suspenso,
-// entao nao ha dado ao vivo para mostrar.
+// duracao, amostras) e os codigos de falha da ultima leitura (/dtc), com
+// decodificacao estrutural SAE em JS: enquanto o Wi-Fi esta no ar o
+// Bluetooth fica suspenso, entao nao ha dado ao vivo para mostrar.
 //
 // Para editar: cole o conteudo num .html, ajuste, teste, cole de volta.
 #ifndef TRACK_PAGE_H
@@ -47,6 +48,25 @@ h1 b{color:var(--acc)}
 .empty{display:none;text-align:center;color:var(--mut);padding:40px 16px;line-height:1.6}
 .empty b{color:var(--tx);display:block;font-size:16px;margin-bottom:6px}
 body.none .grid{display:none}body.none .empty{display:block}
+.dtc{margin:14px 0 4px}
+.dtc h2{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);margin-bottom:8px}
+.dtc h2 span{font-weight:600}
+.mil{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;letter-spacing:.06em;text-transform:none}
+.mil.on{background:#3a1515;color:var(--bad);border:1px solid #5a2222}.mil.off{background:#12301f;color:var(--ok);border:1px solid #1f4a33}
+.dtc .note{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;color:var(--mut);font-size:13px;line-height:1.5}
+.dtc .note.ok{color:var(--ok);border-color:#1f4a33}
+.grp{margin-top:10px}
+.grp h3{font-size:11px;color:var(--mut);letter-spacing:.1em;text-transform:uppercase;margin:0 0 6px 2px}
+.grp h3 b{color:var(--tx)}
+.code{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:6px;display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:baseline}
+.code.st{border-color:#5a2222}.code.pd{border-color:#5a4a1a}
+.code .c{font-size:20px;font-weight:700;letter-spacing:.02em;font-variant-numeric:tabular-nums;grid-row:span 2}
+.code .s{font-size:13px;font-weight:600}
+.code .d{font-size:12px;color:var(--mut)}
+.ff{background:#101418;border:1px dashed var(--line);border-radius:10px;padding:8px 10px;margin:2px 0 8px;font-size:12px;color:var(--mut)}
+.ff b{color:var(--tx);font-weight:600}
+.ff .t{display:block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}
+.ff .chips{display:flex;flex-wrap:wrap;gap:6px 14px}
 footer{margin-top:16px;color:var(--mut);font-size:11.5px;text-align:center;line-height:1.6}
 footer code{color:var(--tx)}
 @media (min-width:700px){body{padding:20px;max-width:1100px;margin:0 auto}.grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}.strip b{font-size:20px}}
@@ -66,6 +86,11 @@ footer code{color:var(--tx)}
 
 <section class="grid" id="grid"></section>
 <section class="empty"><b>Nenhuma sessão registrada</b>Conecte o ELM327 pela tela <em>blelist</em>, rode, e volte aqui: o resumo da última sessão fica guardado no painel.</section>
+
+<section class="dtc" id="dtc">
+  <h2><span>Códigos de falha</span><span id="dtcmeta"></span></h2>
+  <div id="dtcbody"><div class="note">aguardando o painel…</div></div>
+</section>
 
 <footer>CarDash · <code>http://192.168.4.1</code><br>Enquanto esta página está no ar, o Bluetooth do painel fica pausado. Saia da tela do QR no painel para religá-lo.</footer>
 
@@ -138,7 +163,49 @@ async function tick(){
     if(++fails>=2) setPill("off","painel offline");
   }finally{ clearTimeout(t); }
 }
+/* ---- DTCs ---------------------------------------------------------------
+   Decodificacao estrutural SAE J2012, sem tabela: sistema (letra), origem
+   (2o digito) e subsistema (3o digito, para codigos de powertrain). */
+const SYS={P:"Powertrain — motor e transmissão",C:"Chassi — freios, direção, suspensão",B:"Carroceria — conforto e segurança",U:"Rede — comunicação entre módulos"};
+const PSUB={"0":"Mistura ar/combustível e emissões auxiliares","1":"Dosagem de ar/combustível","2":"Dosagem de ar/combustível — circuito dos injetores","3":"Ignição e falha de combustão","4":"Controle auxiliar de emissões (EGR, catalisador, EVAP…)","5":"Velocidade, marcha lenta e entradas auxiliares","6":"Módulo de controle e circuitos de saída","7":"Transmissão","8":"Transmissão","9":"Transmissão","A":"Propulsão híbrida","B":"Propulsão híbrida","C":"Propulsão híbrida"};
+function dtcInfo(code){
+  const sys=code[0], d1=code[1], d2=code[2], tail=code.slice(3);
+  const generic = d1==="0"||d1==="2"||(d1==="3"&&d2>="4");
+  let sub = generic && sys==="P" ? (PSUB[d2]||"") : "";
+  if(sys==="P"&&d1==="0"&&d2==="3"){ const n=parseInt(tail,10); if(n===0) sub+=" · falha aleatória / múltiplos cilindros"; else if(n>=1&&n<=12) sub+=" · cilindro "+n; }
+  return {sys:SYS[sys]||sys, origin:generic?"genérico SAE":"específico do fabricante", sub};
+}
+const el=(t,c,h)=>{const e=document.createElement(t); if(c) e.className=c; if(h!=null) e.innerHTML=h; return e};
+function codeCard(code,cls){
+  const i=dtcInfo(code);
+  return el("div","code "+cls,`<div class="c">${code}</div><div class="s">${i.sys}</div><div class="d">${i.origin}${i.sub?" · "+i.sub:""}</div>`);
+}
+function renderDtc(d){
+  const body=document.getElementById("dtcbody"), meta=document.getElementById("dtcmeta");
+  body.innerHTML="";
+  if(!d.valid){ meta.textContent=""; body.appendChild(el("div","note","Ainda não lido. Os códigos são lidos pelo ELM327 ao conectar e a cada 60 s; conecte o carro pela tela <em>blelist</em> e volte aqui.")); return; }
+  meta.innerHTML=`<span class="mil ${d.mil?"on":"off"}">luz da injeção ${d.mil?"ACESA":"apagada"}</span>`;
+  const total=d.stored.length+d.pending.length+d.permanent.length;
+  const age=el("div","note"+(total?"":" ok"), total?`${total} código${total>1?"s":""} · lido ${ago(d.age_s)}`:`Nenhum código de falha · lido ${ago(d.age_s)}`);
+  body.appendChild(age);
+  const groups=[["Armazenados",d.stored,"st","confirmados pela ECU; acendem a luz"],["Pendentes",d.pending,"pd","vistos uma vez; confirmam se repetirem"],["Permanentes",d.permanent,"pm","só o carro apaga, após ciclos sem a falha"]];
+  for(const [name,list,cls,hint] of groups){
+    if(!list.length) continue;
+    const g=el("div","grp",`<h3><b>${name}</b> · ${list.length} · ${hint}</h3>`);
+    for(const c of list) g.appendChild(codeCard(c,cls));
+    if(cls==="st"&&d.ff){
+      const f=d.ff;
+      g.appendChild(el("div","ff",`<span class="t">Freeze frame · momento em que ${f.dtc} gravou</span><div class="chips"><span><b>${f.rpm}</b> rpm</span><span><b>${f.speed}</b> km/h</span><span>água <b>${f.coolant}</b> °C</span><span>carga <b>${f.load}</b>%</span><span>borboleta <b>${f.throttle}</b>%</span><span>MAP <b>${f.map}</b> kPa</span></div>`));
+    }
+    body.appendChild(g);
+  }
+}
+async function tickDtc(){
+  try{ const r=await fetch("/dtc",{cache:"no-store"}); if(r.ok) renderDtc(await r.json()); }catch(e){}
+}
+
 tick(); setInterval(tick,POLL);
+tickDtc(); setInterval(tickDtc,POLL*3);
 </script>
 </body>
 </html>

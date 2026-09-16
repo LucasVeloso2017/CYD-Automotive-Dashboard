@@ -1,6 +1,7 @@
 #include "elm327_gateway.h"
 
 #include "bt_gateway.h"
+#include "dtc_data.h"
 #include "vehicle_data.h"
 
 #include <Arduino.h>
@@ -23,8 +24,18 @@ static bool _lambda_slot = false;
 static volatile bool _task_run = false;
 static TaskHandle_t _task = NULL;
 
-static char _resp_buf[160];
+/* 320 B: um modo 03 com varios codigos chega em multi-frame (varias linhas
+ * "N:...") e nao cabia nos 160 B originais. */
+static char _resp_buf[320];
 static size_t _resp_len = 0;
+
+/* ---- DTC ---------------------------------------------------------------- */
+#define DTC_REFRESH_MS  60000UL
+
+static dtc_snapshot_t _dtc = {};
+static volatile bool _dtc_request = false;
+static uint32_t _dtc_last_ms = 0;
+static bool _is_can = true;     /* ATDPN >= 6; muda o formato do 43/47/4A */
 
 static const char *OBD2_CMDS[] = {
     "0105\r", "0142\r", "010B\r", "0123\r", "010F\r", "015C\r",
@@ -231,6 +242,193 @@ static bool poll_pid(uint8_t idx)
     return false;
 }
 
+/* Junta o payload hex de uma resposta, descartando prompt, "SEARCHING",
+ * a linha de tamanho (3 hex) e os prefixos "N:" do multi-frame CAN.
+ * Com keep_lines, cada linha vira um grupo separado por '|': em K-line
+ * cada linha e uma resposta completa e nao pode ser emendada na seguinte. */
+static size_t collect_hex(const char *resp, char *out, size_t cap, bool keep_lines)
+{
+    size_t n = 0;
+    const char *line = resp;
+    while (*line) {
+        const char *end = line;
+        while (*end && *end != '\r' && *end != '\n') end++;
+
+        /* copia a linha sem espacos */
+        char buf[96]; size_t bl = 0;
+        for (const char *c = line; c < end && bl < sizeof(buf) - 1; c++)
+            if (!isspace((unsigned char)*c) && *c != '>') buf[bl++] = *c;
+        buf[bl] = '\0';
+
+        bool all_hex = bl > 0;
+        for (size_t i = 0; i < bl; i++) if (!isxdigit((unsigned char)buf[i])) { all_hex = false; break; }
+
+        const char *payload = NULL;
+        if (bl >= 2 && isxdigit((unsigned char)buf[0]) && buf[1] == ':') payload = buf + 2;   /* "0:..." */
+        else if (all_hex && bl != 3) payload = buf;                                          /* "43..." (3 hex = tamanho) */
+
+        if (payload) {
+            if (keep_lines && n > 0 && n < cap - 1) out[n++] = '|';
+            for (const char *c = payload; *c && n < cap - 1; c++)
+                if (isxdigit((unsigned char)*c)) out[n++] = (char)toupper((unsigned char)*c);
+        }
+        line = (*end) ? end + 1 : end;
+    }
+    out[n] = '\0';
+    return n;
+}
+
+static int hexval(char c)
+{
+    return isdigit((unsigned char)c) ? c - '0' : (toupper((unsigned char)c) - 'A' + 10);
+}
+
+static uint8_t hex_byte_at(const char *h, size_t i)
+{
+    return (uint8_t)((hexval(h[i]) << 4) | hexval(h[i + 1]));
+}
+
+static void dtc_add(uint16_t *list, uint8_t *n, uint16_t code)
+{
+    if (code == 0 || *n >= DTC_MAX_CODES) return;
+    for (uint8_t i = 0; i < *n; i++) if (list[i] == code) return;
+    list[(*n)++] = code;
+}
+
+/* Modo 03/07/0A. CAN: "4N cc d1d2 d1d2 ..." com cc = contagem por ECU.
+ * K-line: "4N d1d2 d1d2 d1d2" (3 pares por linha, 0000 = vazio). */
+static bool read_dtc_list(const char *cmd, uint8_t mode_rsp, uint16_t *list, uint8_t *n)
+{
+    *n = 0;
+    if (!send_cmd(cmd, 2500)) return false;
+    if (response_has_error()) return strstr(_resp_buf, "NO DATA") != NULL;   /* NO DATA = lista vazia, nao erro */
+
+    char hex[256];
+    size_t len = collect_hex(_resp_buf, hex, sizeof(hex), !_is_can);
+    size_t i = 0;
+    while (i + 2 <= len) {
+        if (hex[i] == '|') { i++; continue; }
+        if (hex_byte_at(hex, i) != mode_rsp) { i += 2; continue; }
+        i += 2;
+        if (_is_can) {
+            if (i + 2 > len) break;
+            uint8_t cnt = hex_byte_at(hex, i); i += 2;
+            for (uint8_t k = 0; k < cnt && i + 4 <= len; k++, i += 4)
+                dtc_add(list, n, (uint16_t)((hex_byte_at(hex, i) << 8) | hex_byte_at(hex, i + 2)));
+        } else {
+            /* ate 3 pares na linha; 0000 encerra; '|' e a proxima linha */
+            for (uint8_t k = 0; k < 3 && i + 4 <= len && hex[i] != '|'; k++, i += 4) {
+                uint16_t code = (uint16_t)((hex_byte_at(hex, i) << 8) | hex_byte_at(hex, i + 2));
+                if (code == 0) break;
+                dtc_add(list, n, code);
+            }
+        }
+    }
+    return true;
+}
+
+/* Modo 02: "42 PID 00 A B" (frame 0). */
+static bool read_ff_pid(uint8_t pid, uint8_t *a, uint8_t *b)
+{
+    char cmd[10];
+    snprintf(cmd, sizeof(cmd), "02%02X00\r", pid);
+    if (!send_cmd(cmd, 2000) || response_has_error()) return false;
+
+    char hex[128];
+    size_t len = collect_hex(_resp_buf, hex, sizeof(hex), false);
+    for (size_t i = 0; i + 8 <= len; i += 2) {
+        if (hex_byte_at(hex, i) == 0x42 && hex_byte_at(hex, i + 2) == pid && hex_byte_at(hex, i + 4) == 0x00) {
+            *a = hex_byte_at(hex, i + 6);
+            *b = (i + 10 <= len) ? hex_byte_at(hex, i + 8) : 0;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void read_dtcs(void)
+{
+    dtc_snapshot_t d = {};
+
+    /* PID 01: MIL e contagem */
+    if (send_cmd("0101\r", 2000) && !response_has_error()) {
+        uint8_t a = 0, b = 0;
+        if (parse_pid_response(_resp_buf, 0x01, &a, &b)) {
+            d.mil = (a & 0x80) != 0;
+            d.ecu_count = a & 0x7F;
+        }
+    }
+
+    bool ok = read_dtc_list("03\r", 0x43, d.stored, &d.n_stored);
+    read_dtc_list("07\r", 0x47, d.pending, &d.n_pending);
+    read_dtc_list("0A\r", 0x4A, d.permanent, &d.n_permanent);   /* opcional em carros antigos */
+
+    if (d.n_stored > 0) {
+        uint8_t a = 0, b = 0;
+        if (read_ff_pid(0x02, &a, &b)) {
+            d.ff.dtc = (uint16_t)((a << 8) | b);
+            d.ff.valid = d.ff.dtc != 0;
+        }
+        if (d.ff.valid) {
+            if (read_ff_pid(0x0C, &a, &b)) d.ff.rpm = (uint16_t)(((a << 8) | b) / 4);
+            if (read_ff_pid(0x0D, &a, &b)) d.ff.speed_kmh = a;
+            if (read_ff_pid(0x05, &a, &b)) d.ff.coolant_c = (int16_t)a - 40;
+            if (read_ff_pid(0x04, &a, &b)) d.ff.load_pct = (uint8_t)(a * 100 / 255);
+            if (read_ff_pid(0x11, &a, &b)) d.ff.throttle_pct = (uint8_t)(a * 100 / 255);
+            if (read_ff_pid(0x0B, &a, &b)) d.ff.map_kpa = a;
+        }
+    }
+
+    d.valid = ok;
+    d.read_ms = millis();
+    _dtc = d;
+    _dtc_last_ms = d.read_ms;
+
+    char code[6];
+    Serial.printf("[DTC] MIL %s, ECU informa %u | armazenados %u, pendentes %u, permanentes %u%s\n",
+                  d.mil ? "ACESA" : "apagada", d.ecu_count, d.n_stored, d.n_pending, d.n_permanent,
+                  ok ? "" : " (leitura incompleta)");
+    for (uint8_t i = 0; i < d.n_stored; i++) { dtc_format(d.stored[i], code); Serial.printf("[DTC]   armazenado %s\n", code); }
+    for (uint8_t i = 0; i < d.n_pending; i++) { dtc_format(d.pending[i], code); Serial.printf("[DTC]   pendente   %s\n", code); }
+    if (d.ff.valid) {
+        dtc_format(d.ff.dtc, code);
+        Serial.printf("[DTC]   freeze frame %s: %u rpm, %u km/h, agua %d C, carga %u%%, TPS %u%%, MAP %u kPa\n",
+                      code, d.ff.rpm, d.ff.speed_kmh, d.ff.coolant_c, d.ff.load_pct, d.ff.throttle_pct, d.ff.map_kpa);
+    }
+}
+
+extern "C" void dtc_format(uint16_t raw, char *out)
+{
+    static const char sys[4] = { 'P', 'C', 'B', 'U' };
+    out[0] = sys[(raw >> 14) & 0x03];
+    out[1] = (char)('0' + ((raw >> 12) & 0x03));
+    static const char hexd[] = "0123456789ABCDEF";
+    out[2] = hexd[(raw >> 8) & 0x0F];
+    out[3] = hexd[(raw >> 4) & 0x0F];
+    out[4] = hexd[raw & 0x0F];
+    out[5] = '\0';
+}
+
+const dtc_snapshot_t *elm327_dtc(void)
+{
+    return &_dtc;
+}
+
+#ifdef ELM327_HOST_TEST
+/* Teste no PC (preview/test_dtc.cpp): injeta respostas ELM gravadas e
+ * confere o parser sem hardware. */
+void elm327_test_read_dtcs(bool is_can)
+{
+    _is_can = is_can;
+    read_dtcs();
+}
+#endif
+
+void elm327_request_dtc_read(void)
+{
+    _dtc_request = true;
+}
+
 static bool run_init_sequence(void)
 {
     Serial.println("[ELM327] Initializing...");
@@ -252,6 +450,18 @@ static bool run_init_sequence(void)
         return false;
     }
 
+    /* ATDPN: "A6" = auto, protocolo 6 (CAN 11 bit 500k). >= 6 e CAN, e o
+     * formato das respostas de DTC depende disso. */
+    _is_can = true;
+    if (send_cmd("ATDPN\r", 1000)) {
+        const char *p = _resp_buf;
+        while (*p && !isxdigit((unsigned char)*p)) p++;
+        if (*p == 'A' || *p == 'a') p++;
+        if (isxdigit((unsigned char)*p)) _is_can = hexval(*p) >= 6;
+        Serial.printf("[ELM327] Protocolo %c (%s)\n", *p ? *p : '?', _is_can ? "CAN" : "K-line");
+    }
+
+    _dtc_request = true;    /* primeira leitura de DTC logo que a sessao abre */
     Serial.println("[ELM327] Ready");
     return true;
 }
@@ -273,6 +483,12 @@ static void elm327_task(void *param)
 
         if (!_ready) {
             vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
+        if (_dtc_request || (millis() - _dtc_last_ms >= DTC_REFRESH_MS)) {
+            _dtc_request = false;
+            read_dtcs();            /* ~10 comandos, ~2 s; a rotacao de PIDs retoma em seguida */
             continue;
         }
 
