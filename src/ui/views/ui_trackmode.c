@@ -1,6 +1,6 @@
 #include "../ui.h"
 
-lv_obj_t *uic_maxbaterytrack1, *uic_baterytrack, *uic_maxlambdatrack, *uic_lambdatrack;
+lv_obj_t *uic_maxbaterytrack1, *uic_baterytrack, *uic_lambdatrack;
 lv_obj_t *uic_maxoiltrack, *uic_oiltrack, *uic_maxiattrack1, *uic_iattrack;
 lv_obj_t *uic_maxcombttrack, *uic_combpressuretrack, *uic_maxbostttrack1;
 lv_obj_t *uic_boosttrack, *uic_trackmode;
@@ -10,7 +10,7 @@ lv_obj_t *ui_boosttrack = NULL, *ui_maxcontainer1 = NULL, *ui_maxbostttrack1 = N
 lv_obj_t *ui_combpressuretrack = NULL, *ui_maxcontainer = NULL, *ui_maxcombttrack = NULL, *ui_label = NULL;
 lv_obj_t *ui_iattrack = NULL, *ui_maxcontainer2 = NULL, *ui_maxiattrack1 = NULL, *ui_label2 = NULL;
 lv_obj_t *ui_oiltrack = NULL, *ui_maxcontainer3 = NULL, *ui_maxoiltrack = NULL, *ui_label3 = NULL;
-lv_obj_t *ui_lambdatrack = NULL, *ui_maxcontainer4 = NULL, *ui_maxlambdatrack = NULL, *ui_label4 = NULL;
+lv_obj_t *ui_lambdatrack = NULL;
 lv_obj_t *ui_baterytrack = NULL, *ui_maxcontainer5 = NULL, *ui_maxbaterytrack1 = NULL, *ui_label5 = NULL;
 
 static void _max_container(lv_obj_t *parent, lv_obj_t **cont, lv_obj_t **val_lbl, lv_obj_t **max_lbl,
@@ -53,11 +53,22 @@ static void _max_container(lv_obj_t *parent, lv_obj_t **cont, lv_obj_t **val_lbl
     lv_obj_set_style_text_font(*max_lbl, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
+/* Largura fixa e fundo preto opaco. O numero muda a cada quadro (60 fps):
+ * - largura fixa: o rotulo nao muda de tamanho com o texto, entao nao ha
+ *   relayout nem a uniao da area velha com a nova a cada troca;
+ * - fundo opaco: o LVGL comeca a desenhar pelo proprio rotulo e nao repinta a
+ *   imagem de fundo (na flash) por baixo. Atras dos numeros a imagem e preta
+ *   (canal maximo 4 de 255, medido no asset), entao nada some. */
+#define GAUGE_W  140
+
 static lv_obj_t * _gauge(lv_obj_t *parent, int16_t x, int16_t y)
 {
     lv_obj_t *lbl = lv_label_create(parent);
-    lv_obj_set_width(lbl, LV_SIZE_CONTENT);
+    lv_obj_set_width(lbl, GAUGE_W);
     lv_obj_set_height(lbl, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(lbl, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(lbl, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_x(lbl, x); lv_obj_set_y(lbl, y);
     lv_obj_set_align(lbl, LV_ALIGN_CENTER);
     lv_label_set_text(lbl, "00");
@@ -93,8 +104,7 @@ void ui_trackmode_screen_init(void)
     ui_oiltrack = _gauge(ui_trackmode, 82, -13);
     _max_container(ui_trackmode, &ui_maxcontainer3, &ui_maxoiltrack, &ui_label3, 81, 19, 93, -6, LV_FLEX_ALIGN_SPACE_EVENLY);
 
-    ui_lambdatrack = _gauge(ui_trackmode, -83, 68);
-    _max_container(ui_trackmode, &ui_maxcontainer4, &ui_maxlambdatrack, &ui_label4, -82, 91, 94, -15, LV_FLEX_ALIGN_START);
+    ui_lambdatrack = _gauge(ui_trackmode, -83, 68);   /* sem bloco de max: o pico de lambda nao diz nada util */
 
     ui_baterytrack = _gauge(ui_trackmode, 79, 69);
     _max_container(ui_trackmode, &ui_maxcontainer5, &ui_maxbaterytrack1, &ui_label5, 80, 92, 98, -15, LV_FLEX_ALIGN_START);
@@ -104,7 +114,7 @@ void ui_trackmode_screen_init(void)
     uic_combpressuretrack = ui_combpressuretrack; uic_maxcombttrack = ui_maxcombttrack;
     uic_iattrack = ui_iattrack; uic_maxiattrack1 = ui_maxiattrack1;
     uic_oiltrack = ui_oiltrack; uic_maxoiltrack = ui_maxoiltrack;
-    uic_lambdatrack = ui_lambdatrack; uic_maxlambdatrack = ui_maxlambdatrack;
+    uic_lambdatrack = ui_lambdatrack;
     uic_baterytrack = ui_baterytrack; uic_maxbaterytrack1 = ui_maxbaterytrack1;
 }
 
@@ -121,7 +131,6 @@ void ui_trackmode_screen_destroy(void)
     uic_oiltrack = NULL; ui_oiltrack = NULL;
     ui_maxcontainer3 = NULL; uic_maxoiltrack = NULL; ui_maxoiltrack = NULL; ui_label3 = NULL;
     uic_lambdatrack = NULL; ui_lambdatrack = NULL;
-    ui_maxcontainer4 = NULL; uic_maxlambdatrack = NULL; ui_maxlambdatrack = NULL; ui_label4 = NULL;
     uic_baterytrack = NULL; ui_baterytrack = NULL;
     ui_maxcontainer5 = NULL; uic_maxbaterytrack1 = NULL; ui_maxbaterytrack1 = NULL; ui_label5 = NULL;
 }

@@ -8,7 +8,7 @@ extern "C" {
 #include "lvgl.h"
 
 #define SPLASH_DURATION_MS       2500
-#define SCREEN_TRANSITION_MS     300
+#define SCREEN_TRANSITION_MS     400   /* ease-in-out: acelera e freia devagar, pede um pouco mais de tempo */
 
 void ui_navigation_init(void);
 void ui_navigation_apply_bubble(lv_obj_t *obj);

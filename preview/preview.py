@@ -42,6 +42,7 @@ def build():
     used = {
         layout[screen]["image"]
         for screen in ("splash", "nano", "track", "ble")
+        if layout.get(screen)                       # splash pode estar fora do build
     }
     missing = used - set(assets)
     if missing:
@@ -62,6 +63,7 @@ def build():
         "images": images,
         "signals": sample["signals"],
         "devices": sample["devices"],
+        "dtc": sample.get("dtc", {}),
         "meta": {
             "generated": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "source": "src/ui/views/*.c + src/ui/assets/ui_img_*.c",

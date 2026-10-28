@@ -12,6 +12,7 @@ typedef struct {
     float comb_pressure_bar;
     float iat_c;
     float oil_temp_c;
+    float ethanol_pct;      /* PID 0x52; < 0 enquanto o carro nao publicou */
     bool  valid;
     volatile uint32_t data_rev;
 } vehicle_gauge_data_t;

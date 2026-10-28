@@ -2,9 +2,11 @@
 #include "elm327_gateway.h"
 
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <BluetoothSerial.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <ctype.h>
 #include <string.h>
 
 extern "C" {
@@ -21,12 +23,36 @@ static unsigned long _scan_started_at = 0;
 
 #define BT_SCAN_TIMEOUT_MS  12800
 
+/* Janela da conexao automatica (bt_autoconnect_start). O callback da busca
+ * roda na task do Bluetooth: ele so marca o indice achado, e quem conecta e o
+ * bt_loop, no loop do Arduino, pelo mesmo caminho do toque na lista. */
+static volatile bool     _auto_active = false;
+static volatile int8_t   _auto_found = -1;
+static volatile bool     _auto_hit = false;
+static unsigned long     _auto_deadline = 0;
+
+/* Nome de dongle OBD2: "OBDII", "OBD II", "OBD-II", "OBD2", "obdii_xxxx"...
+ * Ignora caixa, espacos, hifen e sublinhado, e aceita sufixo depois. */
+static bool is_obd2_name(const char *name)
+{
+    char n[12];
+    size_t k = 0;
+    for (const char *p = name; *p && k < sizeof(n) - 1; p++) {
+        if (*p == ' ' || *p == '-' || *p == '_') continue;
+        n[k++] = (char)toupper((unsigned char)*p);
+    }
+    n[k] = '\0';
+    return strncmp(n, "OBDII", 5) == 0 || strncmp(n, "OBD2", 4) == 0;
+}
+
 static void perform_connect(uint8_t scan_index);
 
 static void connect_task(void *param)
 {
     uint8_t idx = (uint8_t)(uintptr_t)param;
     perform_connect(idx);
+    Serial.printf("[BT] pilha da conexao: sobra minima %u B de 4096\n",
+                  (unsigned)uxTaskGetStackHighWaterMark(NULL));
     _connect_task = NULL;
     vTaskDelete(NULL);
 }
@@ -52,6 +78,11 @@ static void bt_scan_callback(BTAdvertisedDevice *dev)
 
     bt_state.count++;
     Serial.printf("[BT] Found: %s (%s) %ddBm\n", r->name, r->addr, r->rssi);
+
+    if (_auto_active && _auto_found < 0 && devName.length() > 0 && is_obd2_name(r->name)) {
+        _auto_found = (int8_t)(bt_state.count - 1);
+        Serial.printf("[BT] Dongle OBD2 na busca automatica: %s\n", r->name);
+    }
 }
 
 static bool connect_to_device(const bt_scan_result_t *r)
@@ -101,6 +132,11 @@ static void perform_connect(uint8_t scan_index)
         strncpy(bt_state.connected_addr, r->addr, BT_ADDR_LEN - 1);
         bt_state.connected_addr[BT_ADDR_LEN - 1] = '\0';
         Serial.printf("[BT] Connected to %s\n", r->name);
+        /* O link SPP aberto aloca filas e buffers proprios: este e o pior
+         * momento de heap do firmware, e e nele que o portal web tenta subir. */
+        Serial.printf("[HEAP] %-22s livre %6u  maior bloco %6u\n", "com SPP conectado",
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         elm327_init_session();
     } else {
         bt_state.connected = false;
@@ -116,7 +152,13 @@ void bt_init(void)
 {
     if (_initialized) return;
 
-    if (!SerialBT.begin("CarDash", true)) {
+    /* O terceiro argumento e disableBLE. Com ele o core sobe o controlador em
+     * ESP_BT_MODE_CLASSIC_BT e chama btMemRelease(BT_MODE_BLE), devolvendo ao
+     * heap a memoria que o modo dual reservava para o BLE. Este projeto so usa
+     * SPP Classic (os dongles ELM327 baratos sao Classic), entao essa memoria
+     * nunca seria usada — e ela faz falta na hora de subir o WiFi do portal,
+     * que divide o mesmo heap. */
+    if (!SerialBT.begin("CarDash", true, true)) {
         Serial.println("[BT] Init failed");
         return;
     }
@@ -178,6 +220,20 @@ void bt_disconnect(void)
     bt_state.connected_addr[0] = '\0';
 }
 
+void bt_autoconnect_start(uint32_t window_ms)
+{
+    if (!_initialized || bt_state.connected || _connecting) return;
+    _auto_found = -1;
+    _auto_hit = false;
+    _auto_deadline = millis() + window_ms;
+    _auto_active = true;
+    bt_start_scan();                /* no-op se a lista ja disparou a busca */
+    Serial.printf("[BT] Busca automatica por dongle OBD2 (%lu ms)\n", (unsigned long)window_ms);
+}
+
+bool bt_autoconnect_active(void) { return _auto_active; }
+bool bt_autoconnect_found(void)  { return _auto_hit; }
+
 bool bt_is_connected(void) { return bt_state.connected; }
 bool bt_is_scanning(void) { return bt_state.scanning; }
 bool bt_is_connecting(void) { return bt_state.connecting; }
@@ -219,10 +275,23 @@ void bt_loop(void)
 
     elm327_loop();
 
+    if (_auto_active) {
+        if (_auto_found >= 0) {
+            _auto_active = false;
+            _auto_hit = true;
+            bt_connect((uint8_t)_auto_found);   /* para a busca e conecta, como um toque na lista */
+        } else if ((long)(millis() - _auto_deadline) >= 0) {
+            _auto_active = false;
+            Serial.println("[BT] Nenhum dongle OBD2 na janela: escolha na lista Bluetooth");
+        }
+    }
+
     if (_pending_connect >= 0 && !_connecting && _connect_task == NULL) {
         uint8_t idx = (uint8_t)_pending_connect;
         _pending_connect = -1;
-        if (xTaskCreate(connect_task, "bt_conn", 8192, (void *)(uintptr_t)idx, 1, &_connect_task) != pdPASS) {
+        /* 4 kB: a task so espera o SerialBT.connect() e imprime; com o portal no ar
+         * os 8 kB de antes nem sempre existiam livres na hora de conectar. */
+        if (xTaskCreate(connect_task, "bt_conn", 4096, (void *)(uintptr_t)idx, 1, &_connect_task) != pdPASS) {
             bt_state.connecting = false;
             Serial.println("[BT] Failed to start connect task");
         }

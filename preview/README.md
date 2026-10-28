@@ -12,7 +12,7 @@ Só precisa de Python 3.8+ — nenhuma dependência externa.
 
 ## O que ele mostra
 
-- as quatro telas (`splash`, `nanomode`, `trackmode`, `blelist`) com os fundos reais;
+- as telas (`splash`, `nanomode`, `trackmode`, `etanol`, `blelist`, `dtc`) — as com fundo, com os fundos reais;
 - swipe arrastando com o mouse, com o mesmo limiar de `SWIPE_MIN_PX` (setas ← → também);
 - alternância entre desconectado (gauges em `00`) e conectado, com os valores de
   `sample_data.json` formatados exatamente como no firmware;
@@ -24,7 +24,7 @@ Nada de coordenada copiada à mão. A cada build o preview lê os próprios font
 
 | O que | De onde |
 | --- | --- |
-| Imagens de fundo | `src/ui/assets/ui_img_*.c` (ARGB8888 → PNG) |
+| Imagens de fundo | `src/ui/assets/ui_img_*.c` (I4, RGB565 ou ARGB8888 → PNG) |
 | Posição, fonte e cor dos labels | `src/ui/views/*.c` |
 | Itens da lista BLE (altura, gap, cores, raio) | `ui_blelist.c` |
 | Ordem das telas, swipe, tempo do splash | `ui_navigation.c/.h` |

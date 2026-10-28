@@ -26,9 +26,6 @@ extern lv_obj_t *ui_maxcontainer3;
 extern lv_obj_t *ui_maxoiltrack;
 extern lv_obj_t *ui_label3;
 extern lv_obj_t *ui_lambdatrack;
-extern lv_obj_t *ui_maxcontainer4;
-extern lv_obj_t *ui_maxlambdatrack;
-extern lv_obj_t *ui_label4;
 extern lv_obj_t *ui_baterytrack;
 extern lv_obj_t *ui_maxcontainer5;
 extern lv_obj_t *ui_maxbaterytrack1;
@@ -44,7 +41,6 @@ extern lv_obj_t *uic_maxiattrack1;
 extern lv_obj_t *uic_oiltrack;
 extern lv_obj_t *uic_maxoiltrack;
 extern lv_obj_t *uic_lambdatrack;
-extern lv_obj_t *uic_maxlambdatrack;
 extern lv_obj_t *uic_baterytrack;
 extern lv_obj_t *uic_maxbaterytrack1;
 

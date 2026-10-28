@@ -5,6 +5,8 @@
 
 #include "../ui.h"
 
+#if UI_ENABLE_SPLASH   /* ver ui.h: fora do build enquanto a flag for 0 */
+
 #ifndef LV_ATTRIBUTE_MEM_ALIGN
 #define LV_ATTRIBUTE_MEM_ALIGN
 #endif
@@ -995,3 +997,5 @@ const lv_image_dsc_t ui_img_rent4fun = {
    .header.stride = 211 * 2,
    .header.cf = LV_COLOR_FORMAT_RGB565,
    .data = ui_img_rent4fun_data};
+
+#endif /* UI_ENABLE_SPLASH */

@@ -8,6 +8,7 @@
     "comb_pressure_bar": 3.5,
     "iat_c": 42,
     "oil_temp_c": 95,
+    "ethanol_pct": 29.4,
     "max_boost": 1.2,
     "max_comb": 6.1,
     "max_iat": 55,
@@ -16,8 +17,45 @@
     "max_batt": 14.1
   },
   "devices": [
-    { "name": "OBDII", "addr": "1c:a1:35:68:2f:aa", "rssi": -45, "obd2": true },
-    { "name": "V-LINK", "addr": "00:1d:a5:68:98:8b", "rssi": -72, "obd2": false },
-    { "name": "Car Audio", "addr": "84:2e:14:0c:71:03", "rssi": -81, "obd2": false }
-  ]
+    {
+      "name": "OBDII",
+      "addr": "1c:a1:35:68:2f:aa",
+      "rssi": -45,
+      "obd2": true
+    },
+    {
+      "name": "V-LINK",
+      "addr": "00:1d:a5:68:98:8b",
+      "rssi": -72,
+      "obd2": false
+    },
+    {
+      "name": "Car Audio",
+      "addr": "84:2e:14:0c:71:03",
+      "rssi": -81,
+      "obd2": false
+    }
+  ],
+  "dtc": {
+    "_comment": "Snapshot de exemplo para a tela DTC (src/ui/views/ui_dtc.c). Descricoes vem de dtc_describe.c, replicado no template.",
+    "mil": true,
+    "age_s": 42,
+    "stored": [
+      "P0301",
+      "P0171"
+    ],
+    "pending": [
+      "P0420"
+    ],
+    "permanent": [],
+    "ff": {
+      "dtc": "P0301",
+      "rpm": 6210,
+      "speed": 132,
+      "coolant": 104,
+      "load": 100,
+      "throttle": 98,
+      "map": 210
+    }
+  }
 }

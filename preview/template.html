@@ -52,12 +52,33 @@ code{font-family:"Chakra Petch",ui-monospace,monospace}
                    linear-gradient(90deg,rgba(0,0,0,.22) 1px,transparent 1px);
   background-size:2px 2px}
 .grid.off{display:none}
-.view{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .18s linear}
-.view.on{opacity:1;pointer-events:auto}
+/* telas: espelham lv_screen_load_anim MOVE_LEFT/RIGHT + ease-in-out (ui_navigation.c).
+   CSS ease-in-out = cubic-bezier(.42,0,.58,1), a mesma curva do lv_anim_path_ease_in_out */
+.view{position:absolute;inset:0;visibility:hidden;pointer-events:none}
+.view.on{visibility:visible;pointer-events:auto}
+.view.anim{visibility:visible;transition:transform var(--tms,400ms) cubic-bezier(.42,0,.58,1)}
 .view img.bg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);image-rendering:pixelated}
 @keyframes splashFade{from{opacity:0}to{opacity:1}}
 #view-splash.on img.bg{animation:splashFade 2s ease-in-out .1s both}
 .lbl{position:absolute;left:50%;top:50%;white-space:nowrap;line-height:1;font-variant-numeric:tabular-nums}
+/* tela DTC: espelha ui_dtc.c (geometria e cores vem dos #define DTC_*) */
+.dtc-abs{position:absolute;white-space:nowrap;line-height:1.15}
+.dtc-list{position:absolute;display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:thin}
+.dtc-card{border:1px solid;display:flex;flex-direction:column;gap:2px;flex:none}
+.dtc-card .h{display:flex;justify-content:space-between;align-items:center}
+.dtc-card .d{white-space:pre-line;line-height:1.25}
+.dtc-hint{text-align:center;padding-top:40px;white-space:normal;line-height:1.3}
+.dtc-btn{position:absolute;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
+.dtc-btn.off{cursor:default}
+.dtc-spin{width:44px;height:44px;margin:30px auto 0;border-radius:50%;border:5px solid;animation:dtcspin 1s linear infinite;flex:none}
+@keyframes dtcspin{to{transform:rotate(360deg)}}
+.dtc-modal{position:absolute;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:8}
+.dtc-modal.on{display:flex}
+.dtc-box{width:290px;border:1px solid;padding:10px;box-sizing:border-box;display:flex;flex-direction:column;gap:8px}
+/* barra de status: espelha ui_statusbar.c (lv_layer_top, canto superior direito) */
+.sbar{position:absolute;display:none;align-items:center;z-index:5;pointer-events:none;line-height:1}
+.sbar.on.conn{display:flex}
+.sbar svg{display:block}
 .maxrow{position:absolute;left:50%;top:50%;display:flex;justify-content:space-evenly;
   align-items:center;line-height:1}
 .maxrow span{font-variant-numeric:tabular-nums}
@@ -156,7 +177,7 @@ const FMT = {
   f1(v){ v=f32(v); const w=Math.trunc(v); let f=Math.trunc(f32(f32(v-w)*10)); if(f<0) f=-f;
          return (v<0&&w===0?"-":"")+w+"."+f; },
   f2(v){ v=f32(v); const w=Math.trunc(v); let f=Math.trunc(f32(f32(v-w)*100)); if(f<0) f=-f;
-         return w+"."+String(f).padStart(2,"0"); },
+         return (v<0&&w===0?"-":"")+w+"."+String(f).padStart(2,"0"); },
   int(v){ return String(Math.trunc(f32(v))); }
 };
 
@@ -192,13 +213,13 @@ const views={};
 function view(key, spec){
   const v=el("div","view"); v.id="view-"+key;
   v.style.background=spec.bg;
-  v.appendChild(bg(spec.image));
+  if(spec.image) v.appendChild(bg(spec.image));   /* a tela DTC nao tem asset */
   lcd.appendChild(v);
   views[key]=v;
   return v;
 }
 
-view("splash", D.layout.splash);
+if(D.layout.splash) view("splash", D.layout.splash);   /* UI_ENABLE_SPLASH */
 
 const nano=view("nano", D.layout.nano);
 D.layout.nano.labels.forEach(l=>{
@@ -209,6 +230,7 @@ const track=view("track", D.layout.track);
 D.layout.track.gauges.forEach(g=>{
   label(track, g.id, Object.assign(at(g.x,g.y),{fontSize:g.font+"px",color:g.color}), D.layout.mock.default);
   const m=g.max;
+  if(!m) return;                       /* gauge sem bloco de max (lambda) */
   const row=el("div","maxrow", Object.assign(at(m.x,m.y),{
     width:m.w+"px", height:m.h+"px", color:m.color, fontSize:m.font+"px",
     flexDirection: m.reverse ? "row-reverse" : "row"
@@ -247,8 +269,173 @@ function renderBle(connected){
   });
 }
 
+/* ---------- tela DTC (espelha ui_dtc.c) ---------- */
+const DT=D.layout.dtc;
+const dtcV=view("dtc",{bg:"#000000", image:null});
+const dtcW=320-2*DT.pad_x;
+dtcV.appendChild(el("div","dtc-abs",{left:DT.pad_x+"px",top:DT.title_y+"px",fontSize:"16px",color:DT.color_text},DT.title));
+const dtcStatus=el("div","dtc-abs",{left:DT.pad_x+"px",top:DT.status_y+"px",width:dtcW+"px",fontSize:"12px",overflow:"hidden",textOverflow:"ellipsis"});
+const dtcList=el("div","dtc-list",{left:DT.pad_x+"px",top:DT.list_y+"px",width:dtcW+"px",height:DT.list_h+"px",gap:DT.card_gap+"px"});
+const bw=(dtcW-DT.btn_gap)/2;
+function dtcButton(label,color,x){
+  const b=el("div","dtc-btn",{left:x+"px",top:DT.btn_y+"px",width:bw+"px",height:DT.btn_h+"px",borderRadius:DT.card_radius+"px",fontSize:"14px"},label);
+  b.dataset.color=color; dtcV.appendChild(b); return b;
+}
+dtcV.append(dtcStatus,dtcList);
+const dtcRead=dtcButton("Ler",DT.color_btn_read,DT.pad_x), dtcClear=dtcButton("Apagar",DT.color_btn_clear,DT.pad_x+bw+DT.btn_gap);
+function btnState(b,on){ b.classList.toggle("off",!on); b.style.background=on?b.dataset.color:DT.color_btn_off; b.style.color=on?DT.color_text:DT.color_muted; }
+
+/* mesma regra de dtc_describe.c; os textos vem do proprio C (ui_parse.parse_dtc) */
+function dtcDescribe(code){
+  const sys="PCBU".indexOf(code[0]), d1=parseInt(code[1],16), d2=parseInt(code[2],16), d3=parseInt(code[3],16), d4=parseInt(code[4],16);
+  const generic = sys===0 ? (d1===0||d1===2||(d1===3&&d2>=4)) : (d1===0||d1===3);
+  const sub = (sys===0&&(d1===0||d1===2)) ? (DT.psub[d2.toString(16).toUpperCase()]||null) : null;
+  let cyl=0; if(sys===0&&d1===0&&d2===3&&d3<=1&&d4<=9){ const c=d3*10+d4; cyl=c===0?-1:(c<=12?c:0); }
+  let s=DT.systems[sys]+" - "+(generic?"generico SAE":"do fabricante");
+  if(sub) s+="\n"+sub;
+  if(cyl>0) s+=", cilindro "+cyl; else if(cyl<0) s+=", aleatoria ou em varios cilindros";
+  return s;
+}
+function dtcCard(border){ return el("div","dtc-card",{borderColor:border,background:DT.color_card,borderRadius:DT.card_radius+"px",padding:DT.card_pad+"px"}); }
+function dtcHint(txt,color){ dtcList.appendChild(el("div","dtc-hint",{fontSize:"14px",color},txt)); }
+function dtcCode(code,tag,color){
+  const c=dtcCard(color), h=el("div","h");
+  h.append(el("span",null,{fontSize:"20px",color:DT.color_text},code), el("span",null,{fontSize:"12px",color},tag));
+  c.append(h, el("div","d",{fontSize:"12px",color:DT.color_muted},dtcDescribe(code)));
+  dtcList.appendChild(c);
+}
+
+/* estado simulado: o preview nao tem ELM327; Ler/Apagar encenam o fluxo */
+let dtcSnap=null, dtcOp="idle", dtcBanner=null;
+function dtcReset(){ dtcSnap=JSON.parse(JSON.stringify(D.dtc)); dtcBanner=null; }
+dtcReset();
+function renderDtc(){
+  const conn=document.getElementById("conn").checked, s=dtcSnap;
+  dtcList.textContent="";
+  let st, stc=DT.color_muted;
+  if(!conn){ st="Sem conexao com o ELM327"; dtcHint("Conecte o ELM327 na tela Bluetooth para ler os codigos.",DT.color_muted); }
+  else if(dtcOp!=="idle"){
+    st=dtcOp==="clearing"?"Apagando...":"Lendo...";
+    dtcList.appendChild(el("div","dtc-spin",{borderColor:DT.color_card,borderTopColor:DT.color_btn_read}));
+    dtcHint(dtcOp==="clearing"?"Apagando os codigos...":"Lendo os codigos...",DT.color_muted);
+    dtcList.lastChild.style.paddingTop="8px";
+  } else {
+    const total=s.stored.length+s.pending.length+s.permanent.length;
+    st=`MIL ${s.mil?"ACESA":"apagada"}  -  ${total} codigo${total===1?"":"s"}  -  lido ha ${s.age_s} s`;
+    stc=s.mil?DT.color_stored:DT.color_ok;
+    if(dtcBanner){ const c=dtcCard(DT.color_ok); c.appendChild(el("div",null,{fontSize:"14px",color:DT.color_ok},dtcBanner)); dtcList.appendChild(c); }
+    if(!total) dtcHint("Nenhum codigo de falha.",DT.color_ok);
+    s.stored.forEach(c=>dtcCode(c,"ARMAZENADO",DT.color_stored));
+    if(s.ff && s.stored.length){
+      const f=s.ff, c=dtcCard(DT.color_muted); c.style.borderColor=DT.color_muted+"80";
+      c.appendChild(el("div","d",{fontSize:"12px",color:DT.color_muted},
+        `Freeze frame de ${f.dtc}\n${f.rpm} rpm   ${f.speed} km/h   agua ${f.coolant} C\ncarga ${f.load}%   borboleta ${f.throttle}%   MAP ${f.map} kPa`));
+      dtcList.appendChild(c);
+    }
+    s.pending.forEach(c=>dtcCode(c,"PENDENTE",DT.color_pending));
+    s.permanent.forEach(c=>dtcCode(c,"PERMANENTE",DT.color_permanent));
+  }
+  dtcStatus.textContent=st; dtcStatus.style.color=stc;
+  const idle=conn&&dtcOp==="idle";
+  btnState(dtcRead,idle); btnState(dtcClear,idle&&(s.stored.length+s.pending.length)>0);
+}
+/* confirmacao: espelha o lv_msgbox de clear_click_cb() */
+const dtcModal=el("div","dtc-modal"), dtcBox=el("div","dtc-box",{background:DT.color_card,borderColor:DT.color_btn_clear,borderRadius:DT.card_radius+"px"});
+const dtcFoot=el("div",null,{display:"flex",gap:"8px",justifyContent:"flex-end"});
+const mkBtn=(t,c)=>el("div",null,{background:c,color:DT.color_text,padding:"6px 12px",borderRadius:DT.card_radius+"px",fontSize:"14px",cursor:"pointer"},t);
+const dtcNo=mkBtn("Cancelar",DT.color_btn_off), dtcYes=mkBtn("Apagar",DT.color_btn_clear);
+dtcFoot.append(dtcNo,dtcYes);
+dtcBox.append(el("div",null,{fontSize:"16px",color:DT.color_text},"Apagar os codigos?"),
+  el("div",null,{fontSize:"12px",color:DT.color_muted,lineHeight:"1.3"},
+    "Tambem zera o freeze frame e os monitores de prontidao (o carro leva alguns ciclos para refaze-los). Faca com a ignicao ligada e o motor desligado. Codigos permanentes nao saem."),
+  dtcFoot);
+dtcModal.appendChild(dtcBox); dtcV.appendChild(dtcModal);
+function dtcRun(op,after){ dtcOp=op; renderDtc(); setTimeout(()=>{ after(); dtcOp="idle"; renderDtc(); }, op==="clearing"?1600:1100); }
+dtcRead.addEventListener("click",()=>{ if(dtcRead.classList.contains("off")) return; dtcRun("reading",()=>{ dtcReset(); dtcSnap.age_s=0; }); });
+dtcClear.addEventListener("click",()=>{ if(!dtcClear.classList.contains("off")) dtcModal.classList.add("on"); });
+dtcNo.addEventListener("click",()=>dtcModal.classList.remove("on"));
+dtcYes.addEventListener("click",()=>{ dtcModal.classList.remove("on");
+  dtcRun("clearing",()=>{ dtcSnap={...dtcSnap, mil:false, stored:[], pending:[], ff:null, age_s:0}; dtcBanner="Codigos apagados."; }); });
+/* o toque na tela DTC nao deve virar swipe quando e num botao ou no modal */
+for(const b of [dtcRead,dtcClear,dtcModal]) b.addEventListener("pointerdown",e=>e.stopPropagation());
+
+/* ---------- tela de etanol (espelha ui_etanol.c) ---------- */
+const ET=D.layout.eth;
+const ethV=view("eth",{bg:"#000000", image:null});
+const ethAbs=(css,txt)=>{ const e=el("div","dtc-abs",css,txt); ethV.appendChild(e); return e; };
+ethAbs({left:"0",width:"320px",textAlign:"center",top:ET.title_y+"px",fontSize:"16px",color:ET.color_muted},ET.title);
+const ethRow=ethAbs({left:"0",width:"320px",top:(120+ET.value_y)+"px",transform:"translateY(-50%)",
+  display:"flex",justifyContent:"center",alignItems:"flex-end",gap:"4px",lineHeight:"1"});
+const ethVal=el("span",null,{fontSize:"48px",color:ET.color_text,fontVariantNumeric:"tabular-nums"},"--");
+ethRow.append(ethVal, el("span",null,{fontSize:"28px",color:ET.color_accent,paddingBottom:"6px"},"%"));
+const ethBarTop=120+ET.bar_y-ET.bar_h/2, ethBarLeft=(320-ET.bar_w)/2;
+const ethBar=ethAbs({left:ethBarLeft+"px",top:ethBarTop+"px",width:ET.bar_w+"px",height:ET.bar_h+"px",
+  background:ET.color_track,borderRadius:ET.bar_h/2+"px",overflow:"hidden"});
+const ethFill=el("div",null,{height:"100%",width:"0",background:ET.color_accent,borderRadius:ET.bar_h/2+"px"});
+ethBar.appendChild(ethFill);
+const ethScaleTop=ethBarTop+ET.bar_h+(ET.scale_y-ET.bar_y-ET.bar_h);
+[["0","left"],["50","center"],["100","right"]].forEach(([t,a])=>
+  ethAbs({left:ethBarLeft+"px",width:ET.bar_w+"px",textAlign:a,top:ethScaleTop+"px",fontSize:"12px",color:ET.color_muted},t));
+const ethClass=ethAbs({left:"0",width:"320px",textAlign:"center",top:(120+ET.class_y)+"px",transform:"translateY(-50%)",fontSize:"16px"});
+function renderEth(connected){
+  const raw=D.signals.ethanol_pct, v=(connected && raw>=0) ? Math.min(100,Math.round(raw)) : -1;
+  ethVal.textContent = v<0 ? "--" : String(v);
+  ethFill.style.width = (v<0?0:v)+"%";
+  ethClass.textContent = v<0 ? (connected?"AGUARDANDO A DME":"SEM CONEXAO")
+                       : v<=ET.gasolina_max ? "GASOLINA" : v>=ET.etanol_min ? "ETANOL" : "MISTURA";
+  ethClass.style.color = v<0 ? ET.color_muted : ET.color_accent;
+}
+
+/* ---------- tela de configuracoes (espelha ui_config.c) ---------- */
+const CF=D.layout.cfg;
+const cfgV=view("cfg",{bg:"#000000", image:null});
+const cfgAbs=(parent,css,txt)=>{ const e=el("div","dtc-abs",css,txt); parent.appendChild(e); return e; };
+cfgAbs(cfgV,{left:"0",width:"320px",textAlign:"center",top:CF.title_y+"px",fontSize:"16px",color:CF.color_muted},CF.title);
+function cfgCard(y,h){ return cfgAbs(cfgV,{left:CF.card_x+"px",top:y+"px",width:CF.card_w+"px",height:h+"px",
+  background:CF.color_card,borderRadius:CF.card_radius+"px",boxSizing:"border-box"}); }
+const cfgIn=CF.card_w-2*CF.card_pad;
+const cb=cfgCard(CF.bright_y,CF.bright_h);
+cfgAbs(cb,{left:CF.card_pad+"px",top:CF.card_pad+"px",fontSize:"16px",color:CF.color_text},CF.bright);
+const cfgVal=cfgAbs(cb,{right:CF.card_pad+"px",top:CF.card_pad+"px",fontSize:"16px",color:CF.color_accent},"");
+const sw_=cfgIn-16, sl=cfgAbs(cb,{left:(CF.card_w-sw_)/2+"px",bottom:(CF.card_pad+6)+"px",width:sw_+"px",height:CF.slider_h+"px",
+  background:CF.color_track,borderRadius:CF.slider_h/2+"px",cursor:"pointer"});
+const slFill=el("div",null,{height:"100%",background:CF.color_accent,borderRadius:CF.slider_h/2+"px"});
+const slKnob=el("div",null,{position:"absolute",top:"50%",width:(CF.slider_h+12)+"px",height:(CF.slider_h+12)+"px",
+  borderRadius:"50%",background:CF.color_text,transform:"translate(-50%,-50%)"});
+sl.append(slFill,slKnob);
+let cfgBright=100;
+function cfgShowBright(){ const f=(cfgBright-5)/95*100; slFill.style.width=f+"%"; slKnob.style.left=f+"%"; cfgVal.textContent=cfgBright+"%"; }
+const slSet=e=>{ const r=sl.getBoundingClientRect(); cfgBright=Math.round(5+95*Math.min(1,Math.max(0,(e.clientX-r.left)/r.width))); cfgShowBright(); };
+sl.addEventListener("pointerdown",e=>{ e.stopPropagation(); sl.setPointerCapture(e.pointerId); slSet(e); });
+sl.addEventListener("pointermove",e=>{ if(sl.hasPointerCapture(e.pointerId)) slSet(e); });
+sl.addEventListener("pointerup",e=>e.stopPropagation());
+cfgShowBright();
+const cr=cfgCard(CF.rotate_y,CF.rotate_h);
+cfgAbs(cr,{left:CF.card_pad+"px",top:"50%",transform:"translateY(-50%)",fontSize:"16px",color:CF.color_text},CF.rotate);
+const cfgSw=cfgAbs(cr,{right:CF.card_pad+"px",top:"50%",transform:"translateY(-50%)",width:CF.switch_w+"px",height:CF.switch_h+"px",
+  borderRadius:CF.switch_h/2+"px",background:CF.color_track,cursor:"pointer"});
+const swKnob=el("div",null,{position:"absolute",top:"3px",left:"3px",width:(CF.switch_h-6)+"px",height:(CF.switch_h-6)+"px",
+  borderRadius:"50%",background:CF.color_text,transition:"left .15s"});
+cfgSw.appendChild(swKnob);
+let cfgFlip=false;
+cfgSw.addEventListener("pointerdown",e=>e.stopPropagation());
+cfgSw.addEventListener("click",()=>{ cfgFlip=!cfgFlip; cfgSw.style.background=cfgFlip?CF.color_accent:CF.color_track;
+  swKnob.style.left=cfgFlip?(CF.switch_w-CF.switch_h+3)+"px":"3px";
+  /* gira o conjunto, como o MADCTL gira o painel; o toque segue o desenho */
+  const scr=document.getElementById("screen"); scr.style.transition="transform .3s"; scr.style.transform=cfgFlip?"rotate(180deg)":""; });
+cfgAbs(cfgV,{left:"0",width:"320px",textAlign:"center",top:CF.footer_y+"px",fontSize:"12px",color:CF.color_muted},CF.footer);
+
+/* ---------- barra de status (espelha ui_statusbar.c) ---------- */
+const SB=D.layout.statusbar;
+/* so o icone de Bluetooth, visivel com o ELM327 conectado (classe .conn) */
+const sbar=el("div","sbar",Object.assign({top:SB.margin_y+"px"},
+  SB.align==="right"?{right:SB.margin_x+"px"}:SB.align==="left"?{left:SB.margin_x+"px"}:{left:"50%",transform:"translateX(-50%)"}));
+sbar.innerHTML=`<svg width="${SB.font*0.6}" height="${SB.font}" viewBox="0 0 10 16" fill="none" stroke="${SB.color_bt}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M1 4.5l8 7-4 3.5V1l4 3.5-8 7"/></svg>`;
+lcd.appendChild(sbar);
+
 /* ---------- dados ---------- */
 function setConnected(connected){
+  sbar.classList.toggle("conn",connected);
   for(const [id, b] of Object.entries(D.layout.mock.binds)){
     const e=bound[id];
     if(!e) continue;
@@ -257,20 +444,27 @@ function setConnected(connected){
     e.textContent = raw===undefined ? "--" : FMT[b.fmt](raw);
   }
   renderBle(connected);
+  renderDtc();
+  renderEth(connected);
   document.getElementById("dot").classList.toggle("live",connected);
   document.getElementById("statusTxt").textContent =
     connected ? "[ELM327] Ready — dados ao vivo" : "sem conexão — gauges em "+D.layout.mock.default;
 }
 
 /* ---------- navegação (espelha ui_navigation.c) ---------- */
-const ORDER=["splash"].concat(D.layout.nav.order.map(s=>({
-  ui_nanomode:"nano", ui_trackmode:"track", ui_blelist:"ble"
+const ORDER=(D.layout.splash?["splash"]:[]).concat(D.layout.nav.order.map(s=>({
+  ui_nanomode:"nano", ui_trackmode:"track", ui_etanol:"eth", ui_blelist:"ble", ui_dtc:"dtc", ui_config:"cfg"
 }[s])).filter(Boolean));
+/* indice da primeira tela navegavel: 1 com splash, 0 sem */
+const FIRST = D.layout.splash ? 1 : 0;
 const META={
   splash:{n:"splash", d:"logo, fade-in de 2 s"},
   nano:{n:"nanomode", d:"lambda, água, bateria"},
   track:{n:"trackmode", d:"6 gauges + máximos"},
-  ble:{n:"blelist", d:"scan Bluetooth Classic"}
+  eth:{n:"etanol", d:"percentual de etanol (PID 0x52)"},
+  ble:{n:"blelist", d:"scan Bluetooth Classic"},
+  dtc:{n:"dtc", d:"ler, listar e apagar codigos de falha"},
+  cfg:{n:"config", d:"brilho e tela girada 180 graus"}
 };
 
 const screensBox=document.getElementById("screens");
@@ -283,7 +477,7 @@ const btns=ORDER.map((key,i)=>{
   b.appendChild(t);
   b.addEventListener("click",()=>show(i));
   screensBox.appendChild(b);
-  if(i>0) dotsBox.appendChild(el("i"));
+  if(i>=FIRST) dotsBox.appendChild(el("i"));
   return b;
 });
 const dots=[...dotsBox.children];
@@ -292,19 +486,38 @@ const last=ORDER.length-1;
 let idx=0, splashTimer=null;
 
 function show(i){
-  idx=i;
-  ORDER.forEach((key,n)=>views[key].classList.toggle("on",n===i));
+  const from=idx; idx=i;
+  const oldV=views[ORDER[from]], newV=views[ORDER[i]], T=D.layout.nav.transition_ms;
+  if(from!==i && from>=FIRST && i>=FIRST){
+    /* desliza as duas telas, como MOVE_LEFT (avancar) / MOVE_RIGHT (voltar) */
+    const dir = i>from ? 1 : -1;
+    lcd.style.setProperty("--tms", T+"ms");
+    for(const v of [newV,oldV]) v.classList.remove("anim");
+    newV.style.transform=`translateX(${dir*320}px)`; oldV.style.transform="translateX(0)";
+    newV.classList.add("on");
+    void newV.offsetWidth;                      /* aplica a posicao inicial antes de animar */
+    for(const v of [newV,oldV]) v.classList.add("anim");
+    newV.style.transform="translateX(0)"; oldV.style.transform=`translateX(${-dir*320}px)`;
+    setTimeout(()=>{
+      if(views[ORDER[idx]]!==oldV) oldV.classList.remove("on");   /* nao esconde se o usuario ja voltou */
+      for(const v of [newV,oldV]){ v.classList.remove("anim"); if(views[ORDER[idx]]!==v) v.style.transform=""; }
+    }, T+30);
+  } else {
+    ORDER.forEach((key,n)=>views[key].classList.toggle("on",n===i));
+  }
+  sbar.classList.toggle("on", i>=FIRST);
+
   btns.forEach((b,n)=>b.setAttribute("aria-current",String(n===i)));
-  dots.forEach((d,n)=>d.classList.toggle("on",n===i-1));
-  prev.disabled = i<=1;
-  next.disabled = i===0 || i>=last;
-  if(i!==0 && splashTimer){ clearTimeout(splashTimer); splashTimer=null; }
+  dots.forEach((d,n)=>d.classList.toggle("on",n===i-FIRST));
+  prev.disabled = i<=FIRST;
+  next.disabled = i<FIRST || i>=last;
+  if(i>=FIRST && splashTimer){ clearTimeout(splashTimer); splashTimer=null; }
 }
-prev.addEventListener("click",()=>show(Math.max(1,idx-1)));
+prev.addEventListener("click",()=>show(Math.max(FIRST,idx-1)));
 next.addEventListener("click",()=>show(Math.min(last,idx+1)));
 addEventListener("keydown",e=>{
-  if(e.key==="ArrowLeft" && idx>1) show(idx-1);
-  if(e.key==="ArrowRight" && idx>0 && idx<last) show(idx+1);
+  if(e.key==="ArrowLeft" && idx>FIRST) show(idx-1);
+  if(e.key==="ArrowRight" && idx>=FIRST && idx<last) show(idx+1);
 });
 
 /* swipe com o mesmo limiar de SWIPE_MIN_PX, em pixels da tela do CYD */
@@ -313,10 +526,10 @@ const scale=()=>screen.getBoundingClientRect().width/320;
 let startX=null;
 screen.addEventListener("pointerdown",e=>{startX=e.clientX});
 screen.addEventListener("pointerup",e=>{
-  if(startX===null||idx===0){ startX=null; return; }
+  if(startX===null||idx<FIRST){ startX=null; return; }
   const dx=(e.clientX-startX)/scale(); startX=null;
   if(dx <= -D.layout.nav.swipe_px && idx<last) show(idx+1);
-  else if(dx >= D.layout.nav.swipe_px && idx>1) show(idx-1);
+  else if(dx >= D.layout.nav.swipe_px && idx>FIRST) show(idx-1);
 });
 screen.addEventListener("pointercancel",()=>{startX=null});
 
@@ -325,14 +538,14 @@ document.getElementById("pixels").addEventListener("change",e=>{
   document.getElementById("grid").classList.toggle("off", !e.target.checked);
 });
 document.getElementById("navHint").innerHTML =
-  "Splash sai depois de "+(D.layout.nav.splash_ms/1000).toFixed(1).replace(".",",")+
-  " s. Swipe de "+D.layout.nav.swipe_px+" px troca de tela (<span class=\"kbd\">←</span> <span class=\"kbd\">→</span> também).";
+  (D.layout.splash ? "Splash sai depois de "+(D.layout.nav.splash_ms/1000).toFixed(1).replace(".",",")+" s. " : "Splash fora do build (UI_ENABLE_SPLASH 0). ")+
+  "Swipe de "+D.layout.nav.swipe_px+" px troca de tela (<span class=\"kbd\">←</span> <span class=\"kbd\">→</span> também).";
 document.getElementById("foot").textContent =
   "Gerado em "+D.meta.generated+" a partir de "+D.meta.source+". Recarregue a página depois de mexer nos fontes: o build roda de novo a cada request.";
 
 setConnected(false);
 show(0);
-splashTimer=setTimeout(()=>{ if(idx===0) show(1); }, D.layout.nav.splash_ms);
+if(D.layout.splash) splashTimer=setTimeout(()=>{ if(idx===0) show(1); }, D.layout.nav.splash_ms);
 </script>
 </body>
 </html>

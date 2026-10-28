@@ -1,5 +1,7 @@
 #include "../ui.h"
 
+#if UI_ENABLE_SPLASH   /* ver ui.h: fora do build enquanto a flag for 0 */
+
 lv_obj_t *uic_splash;
 lv_obj_t *ui_splash = NULL;
 lv_obj_t *ui_Image2 = NULL;
@@ -32,3 +34,5 @@ void ui_splash_screen_destroy(void)
     ui_splash = NULL;
     ui_Image2 = NULL;
 }
+
+#endif /* UI_ENABLE_SPLASH */

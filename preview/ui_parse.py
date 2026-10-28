@@ -144,13 +144,17 @@ def parse_track(views_dir):
             src,
         )
     ]
-    if len(gauges) != len(maxes) or not gauges:
-        raise ParseError(
-            "%s: %d gauges para %d blocos de max" % (path, len(gauges), len(maxes))
-        )
-
-    for g, m in zip(gauges, maxes):
+    if not gauges:
+        raise ParseError("%s: nenhum gauge encontrado" % path)
+    for g in gauges:
         g.update(gauge_style)
+
+    # nem todo gauge tem bloco de max (a lambda nao tem): cada max vai para o
+    # gauge mais proximo, em vez de parear por ordem
+    for m in maxes:
+        g = min(gauges, key=lambda g: abs(g["x"] - m["x"]) + abs(g["y"] - m["y"]))
+        if "max" in g:
+            raise ParseError("%s: dois blocos de max para o gauge %s" % (path, g["id"]))
         g["max"] = dict(max_style, **m)
 
     return {"image": _image(src, path), "bg": _screen_bg(src, "ui_trackmode", path), "gauges": gauges}
@@ -196,20 +200,128 @@ def parse_navigation(ui_dir):
         "splash_ms": int(_one(src, r"SPLASH_DURATION_MS\s+(\d+)", "SPLASH_DURATION_MS", path).group(1)),
         "transition_ms": int(_one(src, r"SCREEN_TRANSITION_MS\s+(\d+)", "SCREEN_TRANSITION_MS", path).group(1)),
         "swipe_px": int(_one(c_src, r"SWIPE_MIN_PX\s+(\d+)", "SWIPE_MIN_PX", c_path).group(1)),
-        "order": re.findall(r"&(ui_\w+)", _one(c_src, r"nav_screens\[\]\s*=\s*\{([^}]*)\}", "ordem das telas", c_path).group(1)),
+        # Um &ui_* por linha da lista nav_screens[]; blocos "#if FLAG" de ui.h
+        # que estao em 0 saem, como sairiam no pre-processador.
+        "order": re.findall(
+            r"^\s*&(ui_\w+)",
+            _drop_disabled(
+                _one(c_src, r"(?s)nav_screens\[\]\s*=\s*\{(.*?)\n\};", "ordem das telas", c_path).group(1),
+                ui_dir,
+            ),
+            re.M,
+        ),
     }
+
+
+def _ui_flag(ui_dir, name):
+    """Valor de um #define de flag em ui.h (UI_ENABLE_SPLASH, UI_ENABLE_WEB...)."""
+    path = Path(ui_dir) / "ui.h"
+    return _one(_read(path), r"#define\s+%s\s+(\d+)" % name, name, path).group(1) != "0"
+
+
+def _drop_disabled(text, ui_dir):
+    """Remove os trechos "#if UI_ENABLE_X ... #endif" cuja flag esta em 0."""
+    def keep(m):
+        return m.group(2) if _ui_flag(ui_dir, m.group(1)) else ""
+    return re.sub(r"(?ms)^\s*#if\s+(UI_ENABLE_\w+)\s*$(.*?)^\s*#endif\b[^\n]*$", keep, text)
+
+
+def parse_statusbar(ui_dir):
+    """Alinhamento, margens, fonte e cor do icone de Bluetooth (ui_statusbar.c)."""
+    path = Path(ui_dir) / "ui_statusbar.c"
+    src = _read(path)
+
+    def define(name):
+        return int(_one(src, r"#define\s+%s\s+(?:0x)?([0-9A-Fa-f]+)" % name, name, path).group(1),
+                   16 if "COLOR" in name else 10)
+
+    return {
+        "margin_x": define("STATUSBAR_MARGIN_X"),
+        "margin_y": define("STATUSBAR_MARGIN_Y"),
+        "font": int(_one(src, r"&lv_font_montserrat_(\d+)", "fonte da barra", path).group(1)),
+        "color_bt": "#%06X" % define("STATUSBAR_COLOR_BT"),
+        "align": _one(src, r"#define\s+STATUSBAR_ALIGN\s+LV_ALIGN_TOP_(LEFT|MID|RIGHT)", "STATUSBAR_ALIGN", path).group(1).lower(),
+    }
+
+def parse_dtc(views_dir):
+    """Todos os #define DTC_* de ui_dtc.c (geometria e cores) e os textos fixos."""
+    path = Path(views_dir) / "ui_dtc.c"
+    src = _read(path)
+    vals = {}
+    for name, val in re.findall(r"#define\s+DTC_(\w+)\s+(0x[0-9A-Fa-f]+|\d+)", src):
+        vals[name.lower()] = ("#%06X" % int(val, 16)) if name.startswith("COLOR_") else int(val, 0)
+    for need in ("list_y", "list_h", "btn_y", "btn_h", "pad_x", "color_stored"):
+        if need not in vals:
+            raise ParseError("%s: DTC_%s nao encontrado" % (path, need.upper()))
+    title = _one(src, r'text\(ui_dtc,\s*"([^"]*)"', "titulo da tela DTC", path).group(1)
+
+    # textos da descricao estrutural, lidos do C para nao divergirem
+    dpath = Path(views_dir).parent.parent / "gateway" / "dtc_describe.c"
+    dsrc = _read(dpath)
+    systems_body = _one(dsrc, r"SYSTEMS\[4\]\s*=\s*\{([^}]*)\}", "SYSTEMS", dpath).group(1)
+    systems = re.findall(r'"([^"]*)"', systems_body)
+    psub = {}
+    for cases, text in re.findall(r"((?:case\s+0x[0-9A-Fa-f]+:\s*)+)return\s+\"([^\"]*)\"", dsrc):
+        for h in re.findall(r"0x([0-9A-Fa-f]+)", cases):
+            psub[h.upper()] = text
+    if len(systems) != 4 or len(psub) < 10:
+        raise ParseError("%s: textos da descricao estrutural nao encontrados" % dpath)
+    return dict(vals, title=title, systems=systems, psub=psub)
+
+
+def parse_eth(views_dir):
+    """#define ETH_* de ui_etanol.c (geometria, faixas e cores) e o titulo."""
+    path = Path(views_dir) / "ui_etanol.c"
+    src = _read(path)
+    vals = {}
+    for name, val in re.findall(r"#define\s+ETH_(\w+)\s+\(?(-?0x[0-9A-Fa-f]+|-?\d+)\)?", src):
+        vals[name.lower()] = ("#%06X" % int(val, 16)) if name.startswith("COLOR_") else int(val, 0)
+    for need in ("title_y", "value_y", "bar_w", "bar_h", "bar_y", "scale_y", "class_y",
+                 "gasolina_max", "etanol_min", "color_accent"):
+        if need not in vals:
+            raise ParseError("%s: ETH_%s nao encontrado" % (path, need.upper()))
+    title = _one(src, r'text\(ui_etanol,\s*"([^"]*)"', "titulo da tela de etanol", path).group(1)
+    return dict(vals, title=title)
+
+
+def parse_cfg(views_dir):
+    """#define CFG_* de ui_config.c (geometria e cores) e os textos fixos."""
+    path = Path(views_dir) / "ui_config.c"
+    src = _read(path)
+    vals = {}
+    for name, val in re.findall(r"#define\s+CFG_(\w+)\s+(0x[0-9A-Fa-f]+|\d+)", src):
+        vals[name.lower()] = ("#%06X" % int(val, 16)) if name.startswith("COLOR_") else int(val, 0)
+    for need in ("title_y", "card_x", "card_w", "card_pad", "bright_y", "bright_h",
+                 "rotate_y", "rotate_h", "slider_h", "switch_w", "switch_h", "footer_y"):
+        if need not in vals:
+            raise ParseError("%s: CFG_%s nao encontrado" % (path, need.upper()))
+    texts = re.findall(r'text\(\w+,\s*"([^"]+)"', src)
+    if len(texts) < 4:
+        raise ParseError("%s: textos da tela de configuracoes nao encontrados" % path)
+    return dict(vals, title=texts[0], bright=texts[1], rotate=texts[2], footer=texts[3])
+
+
+def splash_enabled(ui_dir):
+    """Le UI_ENABLE_SPLASH de ui.h. O preview le texto, nao passa pelo
+    pre-processador: sem isto a splash apareceria mesmo fora do build."""
+    path = Path(ui_dir) / "ui.h"
+    return _one(_read(path), r"#define\s+UI_ENABLE_SPLASH\s+(\d+)", "UI_ENABLE_SPLASH", path).group(1) != "0"
 
 
 def parse_all(src_dir):
     src_dir = Path(src_dir)
     ui_dir, views = src_dir / "ui", src_dir / "ui" / "views"
     return {
-        "splash": parse_splash(views),
+        "splash": parse_splash(views) if splash_enabled(ui_dir) else None,
         "nano": parse_nano(views),
         "track": parse_track(views),
         "ble": parse_ble(views),
+        "dtc": parse_dtc(views),
+        "eth": parse_eth(views),
+        "cfg": parse_cfg(views),
         "nav": parse_navigation(ui_dir),
         "mock": parse_mock(ui_dir),
+        "statusbar": parse_statusbar(ui_dir),
     }
 
 
@@ -219,21 +331,38 @@ def parse_mock(ui_dir):
     src = _read(path)
     body = _helper_body(src, "static void render_gauges(", path)
 
+    # Os gauges sao desenhados suavizados: render_gauges() le "sm_boost.shown",
+    # nao "g->boost_bar". O vinculo entre os dois esta nos smooth_set() do
+    # poll_cb, entao e de la que ele sai -- o preview continua derivando tudo do
+    # codigo, sem tabela paralela para alguem esquecer de atualizar.
+    smoothed = dict(re.findall(r"smooth_set\(&(\w+),\s*g->(\w+)\)", src))
+
     binds = {}
-    for fmt, obj, expr in re.findall(r"fmt_(f1|f2|int)\(\s*(ui_\w+)\s*,\s*(.+?)\);", body):
-        # "(int)g->water_temp_c" -> water_temp_c ; "max_boost <= X ? 0 : max_boost" -> max_boost
+    for fmt, obj, expr in re.findall(
+        r"fmt_(f1|f2|int)\(\s*\w+\s*,\s*(ui_\w+)\s*,\s*(.+?)\);", body
+    ):
+        # "(int)sm_water.shown" -> water_temp_c ; "max_boost <= X ? 0 : max_boost" -> max_boost
         expr = re.sub(r"\(int\)|\(float\)", "", expr).strip()
-        signal = re.match(r"(?:g->)?(\w+)", expr)
-        if not signal:
-            raise ParseError("%s: nao entendi a expressao '%s'" % (path, expr))
-        binds[obj] = {"fmt": fmt, "signal": signal.group(1)}
+        smooth = re.match(r"(\w+)\.shown\b", expr)
+        if smooth:
+            signal = smoothed.get(smooth.group(1))
+            if not signal:
+                raise ParseError(
+                    "%s: '%s' nao tem smooth_set() correspondente" % (path, smooth.group(1))
+                )
+        else:
+            m = re.match(r"(?:g->)?(\w+)", expr)
+            if not m:
+                raise ParseError("%s: nao entendi a expressao '%s'" % (path, expr))
+            signal = m.group(1)
+        binds[obj] = {"fmt": fmt, "signal": signal}
 
     if not binds:
         raise ParseError("%s: nenhum fmt_* encontrado em render_gauges()" % path)
 
     default = _one(
         src,
-        r'lv_label_set_text\(labels\[i\],\s*"([^"]*)"\)',
+        r'set_text\(slots\[i\],\s*labels\[i\],\s*"([^"]*)"\)',
         "valor padrao dos gauges",
         path,
     ).group(1)

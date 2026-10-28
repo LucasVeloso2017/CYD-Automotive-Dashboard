@@ -1,7 +1,7 @@
 """Decodifica imagens exportadas pelo SquareLine (src/ui/assets/ui_img_*.c) em PNG.
 
-Sem dependencias externas: le o array C, converte ARGB8888 (BGRA em memoria)
-para RGBA e escreve o PNG na mao.
+Sem dependencias externas: le o array C, converte ARGB8888 (BGRA em memoria),
+RGB565 ou I4 (indexado) para RGBA e escreve o PNG na mao.
 """
 
 import re
@@ -14,6 +14,9 @@ _BYTE_RE = re.compile(r"0x([0-9A-Fa-f]{2})")
 _DSC_RE = re.compile(
     r"const\s+lv_image_dsc_t\s+(\w+)\s*=\s*\{(.*?)\};", re.S
 )
+
+# I4: 16 entradas de lv_color32_t antes dos indices.
+_I4_PALETTE = 16 * 4
 
 
 def _field(body, name):
@@ -50,7 +53,11 @@ def decode(path):
     name, body = dsc.group(1), dsc.group(2)
 
     cf = _field(body, "cf")
-    if cf not in ("LV_COLOR_FORMAT_ARGB8888", "LV_COLOR_FORMAT_RGB565"):
+    if cf not in (
+        "LV_COLOR_FORMAT_ARGB8888",
+        "LV_COLOR_FORMAT_RGB565",
+        "LV_COLOR_FORMAT_I4",
+    ):
         raise ValueError("%s: formato %s ainda nao suportado" % (path.name, cf))
 
     width, height = int(_field(body, "w")), int(_field(body, "h"))
@@ -59,6 +66,32 @@ def decode(path):
     if not data:
         raise ValueError("%s: array de pixels nao encontrado" % path.name)
     buf = bytes(int(b, 16) for b in _BYTE_RE.findall(data.group(1)))
+
+    if cf == "LV_COLOR_FORMAT_I4":
+        # Paleta de 16 lv_color32_t (B,G,R,A) seguida dos indices, 2 px por byte:
+        # nibble alto e o pixel da esquerda. As linhas andam de .header.stride em
+        # .header.stride, que pode ter padding alem de (width + 1) // 2.
+        stride = int(_field(body, "stride"))
+        need = _I4_PALETTE + stride * height
+        if len(buf) < need:
+            raise ValueError(
+                "%s: %d bytes lidos, %d esperados para %dx%d"
+                % (path.name, len(buf), need, width, height)
+            )
+
+        palette = buf[:_I4_PALETTE]
+        rgba = bytearray(width * height * 4)
+        for y in range(height):
+            row = _I4_PALETTE + y * stride
+            for x in range(width):
+                byte = buf[row + (x >> 1)]
+                idx = (byte >> 4) if x % 2 == 0 else (byte & 0x0F)
+                src_i, dst_i = 4 * idx, 4 * (y * width + x)
+                rgba[dst_i] = palette[src_i + 2]          # R
+                rgba[dst_i + 1] = palette[src_i + 1]      # G
+                rgba[dst_i + 2] = palette[src_i]          # B
+                rgba[dst_i + 3] = palette[src_i + 3]      # A
+        return name, width, height, _png(width, height, bytes(rgba))
 
     bpp = 2 if cf == "LV_COLOR_FORMAT_RGB565" else 4
     need = width * height * bpp

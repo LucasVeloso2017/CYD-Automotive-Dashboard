@@ -18,8 +18,15 @@ void ui_nanomode_screen_init(void)
     lv_obj_set_align(ui_Image1, LV_ALIGN_CENTER);
     lv_obj_clear_flag(ui_Image1, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
+    /* Os tres valores mudam a cada quadro: largura fixa (sem relayout). A
+     * lambda fica sobre preto puro e ganha fundo opaco, para o LVGL nao
+     * repintar a imagem por baixo; agua e bateria ficam sobre area colorida
+     * e continuam transparentes. */
     ui_lambdanano = lv_label_create(ui_nanomode);
-    lv_obj_set_width(ui_lambdanano, LV_SIZE_CONTENT);
+    lv_obj_set_width(ui_lambdanano, 120);
+    lv_obj_set_style_text_align(ui_lambdanano, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_lambdanano, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(ui_lambdanano, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_height(ui_lambdanano, LV_SIZE_CONTENT);
     lv_obj_set_x(ui_lambdanano, 4);
     lv_obj_set_y(ui_lambdanano, 0);
@@ -30,7 +37,7 @@ void ui_nanomode_screen_init(void)
     lv_obj_set_style_text_font(ui_lambdanano, &lv_font_montserrat_36, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_temperaturenano = lv_label_create(ui_nanomode);
-    lv_obj_set_width(ui_temperaturenano, LV_SIZE_CONTENT);
+    lv_obj_set_width(ui_temperaturenano, 70);
     lv_obj_set_height(ui_temperaturenano, LV_SIZE_CONTENT);
     lv_obj_set_x(ui_temperaturenano, -114);
     lv_obj_set_y(ui_temperaturenano, 93);
@@ -38,11 +45,11 @@ void ui_nanomode_screen_init(void)
     lv_label_set_text(ui_temperaturenano, "00");
     lv_obj_set_style_text_color(ui_temperaturenano, lv_color_hex(0xAAAAAA), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_temperaturenano, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_align(ui_temperaturenano, LV_TEXT_ALIGN_AUTO, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_temperaturenano, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_temperaturenano, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_baterynano = lv_label_create(ui_nanomode);
-    lv_obj_set_width(ui_baterynano, LV_SIZE_CONTENT);
+    lv_obj_set_width(ui_baterynano, 70);
     lv_obj_set_height(ui_baterynano, LV_SIZE_CONTENT);
     lv_obj_set_x(ui_baterynano, 116);
     lv_obj_set_y(ui_baterynano, 94);
@@ -50,7 +57,7 @@ void ui_nanomode_screen_init(void)
     lv_label_set_text(ui_baterynano, "00");
     lv_obj_set_style_text_color(ui_baterynano, lv_color_hex(0xAAAAAA), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_baterynano, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_align(ui_baterynano, LV_TEXT_ALIGN_AUTO, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_baterynano, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_baterynano, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     uic_nanomode = ui_nanomode;
